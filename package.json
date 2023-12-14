@@ -1,7 +1,7 @@
 {
-  "name": "ts-npm-package-boilerplate",
-  "version": "0.2.5",
-  "description": "TypeScript NPM Module Boilerplate",
+  "name": "queuify",
+  "version": "0.0.1",
+  "description": "A fast and robust queue for Node!",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "scripts": {
@@ -18,18 +18,18 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hebertcisco/ts-npm-package-boilerplate.git"
+    "url": "git+https://github.com/Mr0nline/queuify.git"
   },
   "keywords": [
     "boilerplate",
     "typescript"
   ],
-  "author": "Hebert Cisco",
+  "author": "Mr0nline",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/hebertcisco/ts-npm-package-boilerplate/issues"
+    "url": "https://github.com/Mr0nline/queuify/issues"
   },
-  "homepage": "https://github.com/hebertcisco/ts-npm-package-boilerplate#readme",
+  "homepage": "https://github.com/Mr0nline/queuify#readme",
   "devDependencies": {
     "@types/jest": "29.4.0",
     "@typescript-eslint/eslint-plugin": "5.54.0",
