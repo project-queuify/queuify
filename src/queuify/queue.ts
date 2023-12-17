@@ -1,4 +1,4 @@
-import { connectToDb, randomUUID } from '../helpers';
+import { connectToDb } from '../helpers';
 import { tDbConnectOptions, tQueue } from '../types';
 
 export default class Queue implements tQueue {

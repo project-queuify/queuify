@@ -1,2 +1,2 @@
 export * from './db';
-export * from './uuid';
+export * from './utils';

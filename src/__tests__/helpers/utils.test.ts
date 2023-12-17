@@ -1,4 +1,4 @@
-import uuid from '../index';
+import { randomUUID } from '../../index';
 
 describe('valid UUID', () => {
   let VALID_UUID_REGEX: RegExp;
@@ -8,6 +8,6 @@ describe('valid UUID', () => {
   });
 
   test('should match a valid UUID', () => {
-    expect(VALID_UUID_REGEX.test(uuid.v4())).toBeTruthy();
+    expect(VALID_UUID_REGEX.test(randomUUID())).toBeTruthy();
   });
 });
