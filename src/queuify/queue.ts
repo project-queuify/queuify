@@ -1,12 +1,15 @@
+import { Redis } from 'ioredis';
 import { connectToDb } from '../helpers';
 import { tDbConnectOptions, tQueue } from '../types';
 
 export default class Queue implements tQueue {
+  public db: Redis;
+
   constructor(name: string, ...dbOpts: tDbConnectOptions);
   constructor(name: string);
   constructor(...args: any[]) {
     console.dir(args);
-    connectToDb(...(args.slice(1) as tDbConnectOptions));
+    this.db = connectToDb(...(args.slice(1) as tDbConnectOptions));
     console.log('Initialized queue', args[0]);
   }
 

@@ -2,8 +2,8 @@ import Redis from 'ioredis';
 
 import { tDbConnectOptions } from '../types';
 
-type tConnectToDb = (...args: tDbConnectOptions) => Promise<Redis>;
-export const connectToDb: tConnectToDb = async (...args) => {
+type tConnectToDb = (...args: tDbConnectOptions) => Redis;
+export const connectToDb: tConnectToDb = (...args) => {
   const redis = !args.length
     ? new Redis()
     : args.length === 1
