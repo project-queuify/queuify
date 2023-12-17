@@ -1,4 +1,5 @@
 Queuify is building!
+[![codecov](https://codecov.io/gh/Mr0nline/queuify/graph/badge.svg?token=HTYAPT9VM1)](https://codecov.io/gh/Mr0nline/queuify)
 
 ## Queuify Pattern!
 
