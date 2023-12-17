@@ -1,4 +1,7 @@
-export { Uuid } from './helpers/uuid';
-import uuid from './helpers/uuid';
+import Queue from './queuify';
 
-export default uuid;
+export * from './helpers';
+export * from './queuify';
+export * from './types';
+
+export default Queue;
