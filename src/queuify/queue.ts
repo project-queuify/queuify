@@ -8,7 +8,6 @@ export default class Queue implements tQueue {
   constructor(name: string, ...dbOpts: tDbConnectOptions);
   constructor(name: string);
   constructor(...args: any[]) {
-    console.dir(args);
     this.db = connectToDb(...(args.slice(1) as tDbConnectOptions));
     console.log('Initialized queue', args[0]);
   }
