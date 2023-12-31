@@ -19,6 +19,12 @@ export type tGlobalQueueConfig = tCommonQueueConfig & {
   maxWorkers?: number;
   pollingTime?: number;
 };
+
+declare global {
+  // eslint-disable-next-line no-var
+  var queuifyConfig: tGlobalQueueConfig;
+}
+
 export type tQueueConfig = tCommonQueueConfig & {
   name: string;
 };

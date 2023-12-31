@@ -1,3 +1,5 @@
+global.queuifyConfig = { batchConcurrency: 2 };
+
 import './queues/first-queue';
 console.log('first queue started');
 import './queues/second-queue';
