@@ -1,12 +1,15 @@
 import { Redis } from 'ioredis';
 import { EventEmitter } from 'node:events';
-import { connectToDb } from '../helpers';
-import { tQueueEngine, tQueueEngineStatus } from '../types';
+
+import { DBActions, checkExisting, connectToDb, decompressData } from '../helpers';
+import { tQueue, tQueueEngine } from '../types';
+import { ENTITIES, ENGINE_STATUS, QUEUE_EVENTS } from '../helpers/constants';
+import { ALREADY_EXISTS } from '../helpers/messages';
 
 class QueuifyEngine extends EventEmitter implements tQueueEngine {
-  status = tQueueEngineStatus.NONE;
+  status = ENGINE_STATUS.NONE;
   debug = !!globalThis.queuifyConfig.debug;
-  queues = new Map();
+  queues: Map<string, { queue: tQueue; dbActions: InstanceType<typeof DBActions> }> = new Map();
   // Queue Engine can have their own DB which is set only when we have global option available.
   // When creating a Queue without DB options, It will use this global connection!
   globalDb: Redis | null = null;
@@ -14,13 +17,13 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     super();
     // Start the engine
     this.debugLog('Starting the queue engine');
-    this.status = tQueueEngineStatus.STARTING;
+    this.status = ENGINE_STATUS.STARTING;
     if (globalThis.queuifyConfig.dbOptions) {
       this.globalDb = connectToDb(...globalThis.queuifyConfig.dbOptions);
     }
 
     // Engine is started!
-    this.status = tQueueEngineStatus.RUNNING;
+    this.status = ENGINE_STATUS.RUNNING;
   }
 
   private debugLog(...args: unknown[]) {
@@ -28,6 +31,37 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       console.log('💻', ...args);
     }
   }
+
+  public start(queue: tQueue) {
+    if (!queue.db) throw new Error('Queue db is required');
+
+    const queueName = queue.name;
+    checkExisting(this.queues.get(queueName), ALREADY_EXISTS(ENTITIES.QUEUE, queueName));
+
+    this.queues.set(queueName, { queue, dbActions: new DBActions(queue.db) });
+    this.emit(QUEUE_EVENTS.QUEUE_ADD, queueName);
+    this.processQueue(queueName);
+  }
+
+  private async processQueue(queueName: string) {
+    const queue = this.queues.get(queueName);
+    if (!queue) return;
+    console.time('Fetching jobs' + queueName);
+    const jobs = await queue.dbActions.getJobs(queueName);
+    console.timeEnd('Fetching jobs' + queueName);
+    console.log(
+      '😊 -> QueuifyEngine -> processQueue -> jobs:',
+      jobs,
+      jobs.map(([_, [__, data]]) => decompressData(data)),
+    );
+  }
 }
 
-export default new QueuifyEngine();
+const queuifyEngine = new QueuifyEngine();
+
+queuifyEngine.on(QUEUE_EVENTS.QUEUE_ADD, (queueName) => {
+  const queueData = queuifyEngine.queues.get(queueName);
+  if (!queueData) return;
+});
+
+export default queuifyEngine;
