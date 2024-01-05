@@ -8,7 +8,7 @@ import { ALREADY_EXISTS } from '../helpers/messages';
 
 class QueuifyEngine extends EventEmitter implements tQueueEngine {
   status = ENGINE_STATUS.NONE;
-  debug = !!globalThis.queuifyConfig.debug;
+  debug = !!globalThis.queuifyConfig?.debug;
   queues: Map<string, { queue: tQueue; dbActions: InstanceType<typeof DBActions> }> = new Map();
   // Queue Engine can have their own DB which is set only when we have global option available.
   // When creating a Queue without DB options, It will use this global connection!
@@ -18,7 +18,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     // Start the engine
     this.debugLog('Starting the queue engine');
     this.status = ENGINE_STATUS.STARTING;
-    if (globalThis.queuifyConfig.dbOptions) {
+    if (globalThis.queuifyConfig?.dbOptions) {
       this.globalDb = connectToDb(...globalThis.queuifyConfig.dbOptions);
     }
 

@@ -9,7 +9,7 @@ import queuifyEngine from './engine';
 export default class Queue implements tQueue {
   public db;
   public name;
-  private compressData = !!globalThis.queuifyConfig.compressData;
+  private compressData = !!globalThis.queuifyConfig?.compressData;
 
   constructor(config: tQueueConfig, ...dbOpts: tDbConnectOptions);
   constructor(name: string, ...dbOpts: tDbConnectOptions);
@@ -55,9 +55,13 @@ export default class Queue implements tQueue {
     return null;
   }
 
-  process = (job: unknown) => {
-    return null;
-  };
+  async process(workerFilePath: string): Promise<unknown>;
+  async process(workerFunction: (...args: unknown[]) => unknown): Promise<unknown>;
+  async process(workerPathOrFunction: string | unknown): Promise<unknown> {
+    const workerFunction =
+      typeof workerPathOrFunction === 'string' ? await import(workerPathOrFunction) : workerPathOrFunction;
+    return;
+  }
 
   batch = (job: unknown) => {
     return null;

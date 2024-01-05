@@ -36,12 +36,19 @@ export declare class tQueue {
   constructor();
   public db: Redis | null;
   public name: string;
-  public schedule(jobId: string, data: any): Promise<any>;
-  public schedule(data: any): Promise<any>;
-  public process: (job: any) => void;
-  public batch: (job: any) => void;
+  public schedule(jobId: string, data: unknown): Promise<unknown>;
+  public schedule(data: unknown): Promise<unknown>;
+  public process: (job: unknown) => void;
+  public batch: (job: unknown) => void;
 }
 export declare class tQueueEngine extends EventEmitter {
   status: ENGINE_STATUS;
   globalDb: Redis | null; // Global redis connection which is used by all queues if they don't have their own connection
 }
+
+export type tJob = {
+  id: string;
+  data: unknown;
+};
+
+export type tWorkerFunction = (job: tJob) => Promise<unknown> | unknown;
