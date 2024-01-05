@@ -29,7 +29,11 @@ export default class Queue implements tQueue {
     }
 
     const dbOptions = args.slice(1) as tDbConnectOptions;
-    this.db = dbOptions.length ? connectToDb(...dbOptions) : (queuifyEngine.globalDb as Redis);
+    this.db = dbOptions.length
+      ? connectToDb(...dbOptions)
+      : queuifyEngine.globalDb
+      ? (queuifyEngine.globalDb as Redis)
+      : connectToDb('redis://localhost:6379');
 
     if (!this.db) {
       throw new Error('Database connection is required');

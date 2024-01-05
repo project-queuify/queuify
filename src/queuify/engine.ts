@@ -40,20 +40,15 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
 
     this.queues.set(queueName, { queue, dbActions: new DBActions(queue.db) });
     this.emit(QUEUE_EVENTS.QUEUE_ADD, queueName);
-    this.processQueue(queueName);
+    return this.processQueue(queueName);
   }
 
   private async processQueue(queueName: string) {
     const queue = this.queues.get(queueName);
     if (!queue) return;
-    console.time('Fetching jobs' + queueName);
+
     const jobs = await queue.dbActions.getJobs(queueName);
-    console.timeEnd('Fetching jobs' + queueName);
-    console.log(
-      '😊 -> QueuifyEngine -> processQueue -> jobs:',
-      jobs,
-      jobs.map(([_, [__, data]]) => decompressData(data)),
-    );
+    console.log('😊 -> QueuifyEngine -> processQueue -> jobs:', jobs);
   }
 }
 

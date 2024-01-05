@@ -34,7 +34,7 @@ export declare class tQueue {
   constructor(name: string, ...dbOpts: tDbConnectOptions);
   constructor(name: string);
   constructor();
-  public db: Redis | null;
+  public db: Redis;
   public name: string;
   public schedule(jobId: string, data: unknown): Promise<unknown>;
   public schedule(data: unknown): Promise<unknown>;
