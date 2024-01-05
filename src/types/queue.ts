@@ -38,7 +38,8 @@ export declare class tQueue {
   public name: string;
   public schedule(jobId: string, data: unknown): Promise<unknown>;
   public schedule(data: unknown): Promise<unknown>;
-  public process: (job: unknown) => void;
+  public process(workerFilePath: string): Promise<unknown>;
+  public process(workerFunction: (...args: unknown[]) => unknown): Promise<unknown>;
   public batch: (job: unknown) => void;
 }
 export declare class tQueueEngine extends EventEmitter {
