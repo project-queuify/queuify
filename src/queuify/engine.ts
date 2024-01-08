@@ -9,7 +9,10 @@ import { ALREADY_EXISTS } from '../helpers/messages';
 class QueuifyEngine extends EventEmitter implements tQueueEngine {
   status = ENGINE_STATUS.NONE;
   debug = !!globalThis.queuifyConfig?.debug;
-  queues: Map<string, { queue: tQueue; dbActions: InstanceType<typeof DBActions> }> = new Map();
+  queues: Map<
+    string,
+    { queue: tQueue; dbActions: InstanceType<typeof DBActions>; workers: ((...args: unknown[]) => unknown)[] }
+  > = new Map();
   // Queue Engine can have their own DB which is set only when we have global option available.
   // When creating a Queue without DB options, It will use this global connection!
   globalDb: Redis | null = null;
@@ -38,7 +41,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     const queueName = queue.name;
     checkExisting(this.queues.get(queueName), ALREADY_EXISTS(ENTITIES.QUEUE, queueName));
 
-    this.queues.set(queueName, { queue, dbActions: new DBActions(queue.db) });
+    this.queues.set(queueName, { queue, dbActions: new DBActions(queue.db), workers: [] });
     this.emit(QUEUE_EVENTS.QUEUE_ADD, queueName);
     return this.processQueue(queueName);
   }
@@ -49,6 +52,13 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
 
     const jobs = await queue.dbActions.getJobs(queueName);
     console.log('😊 -> QueuifyEngine -> processQueue -> jobs:', jobs);
+  }
+
+  public addWorker(queueName: string, workerFunction: (...args: unknown[]) => unknown) {
+    const queue = this.queues.get(queueName);
+    if (!queue) return;
+
+    queue.workers.push(workerFunction);
   }
 }
 

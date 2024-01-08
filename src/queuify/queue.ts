@@ -59,12 +59,20 @@ export default class Queue implements tQueue {
     return null;
   }
 
+  // TODO: Add support for named workers
+  async process(name: string, workerFilePath: string): Promise<unknown>;
+  async process(name: string, workerFunction: (...args: unknown[]) => unknown): Promise<unknown>;
   async process(workerFilePath: string): Promise<unknown>;
   async process(workerFunction: (...args: unknown[]) => unknown): Promise<unknown>;
   async process(workerPathOrFunction: string | unknown): Promise<unknown> {
     const workerFunction =
       typeof workerPathOrFunction === 'string' ? await import(workerPathOrFunction) : workerPathOrFunction;
-    return;
+
+    if (typeof workerFunction !== 'function') {
+      throw new Error('Worker function is required');
+    }
+
+    return queuifyEngine.addWorker(this.name, workerFunction);
   }
 
   batch = (job: unknown) => {
