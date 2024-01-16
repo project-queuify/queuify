@@ -1,7 +1,8 @@
+/* eslint-disable @typescript-eslint/ban-types */
 import { compress, decompress } from 'lz-string';
 import crypto from 'node:crypto';
 import uniqid from 'uniqid';
-import { PREFIXES } from './constants';
+import { PREFIXES, QUEUIFY_KEY_TYPES, QUEUIFY_JOB_STATUS } from './constants';
 
 /**
  * Generates a random UUID.
@@ -18,14 +19,11 @@ export const randomUUID = (options?: crypto.RandomUUIDOptions | undefined): stri
  */
 export const generateId = (prefix?: string, suffix?: string): string => uniqid(prefix, suffix);
 
-/**
- * Returns the queuify key for the given name.
- *
- * @param {string} name - The name to generate the queuify key for.
- * @return {string} The queuify key.
- */
-export const getQueuifyKey = (name: string, postfix?: string): string =>
-  `queuify${postfix ? `_${postfix}` : ''}:${name}`;
+export const getQueuifyKey = (
+  name: string,
+  type: QUEUIFY_KEY_TYPES = QUEUIFY_KEY_TYPES.JOBS,
+  status?: QUEUIFY_JOB_STATUS,
+): string => `queuify:${name}${type ? `:${type}` : ''}${status ? `:${status}` : ''}`;
 
 /**
  * Executes a processor function with the given data, handling any errors that occur.
@@ -111,3 +109,19 @@ export const toTitleCase = (str: string): string =>
   str.replace(/\w\S*/g, (txt) => {
     return txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase();
   });
+
+export const promisifyFunction =
+  (fn: Function) =>
+  (...args: unknown[]): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      try {
+        const result = fn(...args);
+        if (result instanceof Promise) {
+          result.then(resolve).catch(reject);
+        } else {
+          resolve(result);
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });

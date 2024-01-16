@@ -2,7 +2,8 @@ import { Redis } from 'ioredis';
 import { EventEmitter } from 'node:events';
 
 import { tDbConnectOptions } from './db';
-import { WORKER_TYPES, ENGINE_STATUS } from '../helpers/constants';
+import { WORKER_TYPES, ENGINE_STATUS, WORKER_STATUS } from '../helpers/constants';
+import { DBActions } from '../helpers';
 
 type tCommonQueueConfig = {
   workerType?: WORKER_TYPES;
@@ -53,3 +54,10 @@ export type tJob = {
 };
 
 export type tWorkerFunction = (job: tJob) => Promise<unknown> | unknown;
+
+export type tQueueMapValue = {
+  queue: tQueue;
+  dbActions: InstanceType<typeof DBActions>;
+  workers: Map<string, { worker: tWorkerFunction; jobs: tJob[]; status: WORKER_STATUS }>;
+  idleWorkerId: string;
+};

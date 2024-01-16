@@ -42,6 +42,10 @@ export default class Queue implements tQueue {
     queuifyEngine.start(this);
   }
 
+  public on(eventName: string | symbol, listener: (...args: unknown[]) => unknown): unknown {
+    return queuifyEngine.on(eventName, listener);
+  }
+
   async schedule(jobId: string, data: unknown): Promise<unknown>;
   async schedule(data: unknown): Promise<unknown>;
   async schedule(jobIdOrData: string | unknown, data?: unknown): Promise<unknown> {
@@ -50,8 +54,8 @@ export default class Queue implements tQueue {
     const jobId = arguments.length === 2 ? (jobIdOrData as string) : generateId();
 
     const queueData = checkRequired(queuifyEngine.queues.get(this.name), REQUIRED(ENTITIES.QUEUE));
-    await queueData.dbActions.addJob(
-      this.name,
+    await queuifyEngine.addJob(
+      queueData.queue.name,
       jobId,
       this.compressData ? PREFIXES.LZ_CACHED + preparedData : preparedData,
     );
@@ -72,10 +76,10 @@ export default class Queue implements tQueue {
       throw new Error('Worker function is required');
     }
 
-    return queuifyEngine.addWorker(this.name, workerFunction);
+    return await queuifyEngine.addWorker(this.name, workerFunction);
   }
 
   batch = (job: unknown) => {
-    return null;
+    return job;
   };
 }

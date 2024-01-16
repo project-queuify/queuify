@@ -29,6 +29,44 @@ export enum ENGINE_STATUS {
   STOPPED,
 }
 
+export enum WORKER_STATUS {
+  NONE,
+  IDLE,
+  BUSY,
+}
 export enum QUEUE_EVENTS {
   QUEUE_ADD = 'queue:add',
+  WORKER_ADD = 'worker:add',
+  JOB_ADD = 'job:add',
+  JOB_POOL_REQUEST = 'job-pool:request',
+  JOB_POOL_PROCESS = 'job-pool:process',
+  JOB_COMPLETE = 'job:complete',
+  JOB_FAIL = 'job:fail',
+}
+
+export enum QUEUIFY_KEY_TYPES {
+  RUNS = 'runs',
+  JOBS = 'jobs',
+  IDS = 'ids',
+}
+
+export enum QUEUIFY_JOB_STATUS {
+  PENDING = 'pending',
+  STALLED = 'stalled',
+  RUNNING = 'running',
+  COMPLETED = 'completed',
+  RETRY = 'retry',
+  FAILED = 'failed',
+}
+
+export enum QUEUIFY_JOB_FIELDS {
+  STATUS = 'status',
+  JOB_ID = 'jobId',
+  DATA = 'data',
+  FAILED_REASON = 'failedReason',
+}
+
+export enum DB_FIELDS {
+  LEFT = 'LEFT',
+  RIGHT = 'RIGHT',
 }
