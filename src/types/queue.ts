@@ -60,4 +60,5 @@ export type tQueueMapValue = {
   dbActions: InstanceType<typeof DBActions>;
   workers: Map<string, { worker: tWorkerFunction; jobs: tJob[]; status: WORKER_STATUS }>;
   idleWorkerId: string;
+  isStalledJobsProcessingComplete: boolean;
 };

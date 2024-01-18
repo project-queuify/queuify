@@ -2,7 +2,7 @@ import { Redis } from 'ioredis';
 import { EventEmitter } from 'node:events';
 
 import { DBActions, checkExisting, connectToDb, generateId, promisifyFunction } from '../helpers';
-import { tQueue, tQueueEngine, tQueueMapValue } from '../types';
+import { tJob, tQueue, tQueueEngine, tQueueMapValue } from '../types';
 import { ENTITIES, ENGINE_STATUS, QUEUE_EVENTS, QUEUIFY_JOB_STATUS, WORKER_STATUS } from '../helpers/constants';
 import { ALREADY_EXISTS } from '../helpers/messages';
 
@@ -13,6 +13,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
   // Queue Engine can have their own DB which is set only when we have global option available.
   // When creating a Queue without DB options, It will use this global connection!
   globalDb: Redis | null = null;
+
   constructor() {
     super();
     // Start the engine
@@ -38,7 +39,13 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     const queueName = queue.name;
     checkExisting(this.queues.get(queueName), ALREADY_EXISTS(ENTITIES.QUEUE, queueName));
 
-    this.queues.set(queueName, { queue, dbActions: new DBActions(queue.db), workers: new Map(), idleWorkerId: '' });
+    this.queues.set(queueName, {
+      queue,
+      dbActions: new DBActions(queue.db),
+      workers: new Map(),
+      idleWorkerId: '',
+      isStalledJobsProcessingComplete: false,
+    });
     this.emit(QUEUE_EVENTS.QUEUE_ADD, queueName);
   }
 
@@ -84,7 +91,13 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     if (!workerData) return;
 
     // First prioritize stalled jobs
-    let jobs = await queue.dbActions.getJobs(queueName, QUEUIFY_JOB_STATUS.STALLED);
+    let jobs: tJob[] = [];
+    if (!queue.isStalledJobsProcessingComplete) {
+      jobs = await queue.dbActions.getJobs(queueName, QUEUIFY_JOB_STATUS.STALLED);
+      if (!jobs.length) {
+        queue.isStalledJobsProcessingComplete = true;
+      }
+    }
 
     if (!jobs.length) {
       // Then get pending jobs
@@ -126,17 +139,10 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     while (workerData.jobs.length) {
       const job = workerData.jobs.pop();
       if (!job) break;
-      // const random = Math.random();
-      // if (random > 0.5) {
-      //   throw new Error('Something went wrong');
-      // }
       workerFunction(job)
         .then(async () => {
-          console.log('Completing the job');
           await queue.dbActions.completeJob(queueName, job.id);
-          console.log('Completed the job');
           this.emit(`${queueName}:${QUEUE_EVENTS.JOB_COMPLETE}`, job.id);
-          console.log('Emitting');
         })
         .catch(async (error) => {
           await queue.dbActions.failJob(queueName, job.id, error?.message);
@@ -167,11 +173,12 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
 
   private async startWorkerPool(queue: tQueueMapValue) {
     // Move running jobs to stalled list
-    await queue.dbActions.moveJobsBetweenLists(
+    const stalledJobs = await queue.dbActions.moveJobsBetweenLists(
       queue.queue.name,
       QUEUIFY_JOB_STATUS.RUNNING,
       QUEUIFY_JOB_STATUS.STALLED,
     );
+    if (!stalledJobs.length) queue.isStalledJobsProcessingComplete = true;
   }
 }
 

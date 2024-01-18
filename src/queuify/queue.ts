@@ -42,8 +42,8 @@ export default class Queue implements tQueue {
     queuifyEngine.start(this);
   }
 
-  public on(eventName: string | symbol, listener: (...args: unknown[]) => unknown): unknown {
-    return queuifyEngine.on(eventName, listener);
+  public on(eventName: string, listener: (...args: unknown[]) => unknown): unknown {
+    return queuifyEngine.on(`${this.name}:${eventName}`, listener);
   }
 
   async schedule(jobId: string, data: unknown): Promise<unknown>;

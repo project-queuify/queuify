@@ -30,10 +30,6 @@ export class DBActions {
     this.db = db;
   }
 
-  public setupQueue(queueName: string) {
-    console.log('😊 -> DBActions -> setupQueue -> queueName:', queueName);
-  }
-
   public async getJobs(queueName: string, from: QUEUIFY_JOB_STATUS, limit = 1) {
     const queuifyListKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.RUNS, from);
     const queuifyRunsKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.RUNS);
@@ -50,7 +46,6 @@ export class DBActions {
       jobIds.push(jobId);
     }
 
-    console.log('😊 -> DBActions -> getJobs -> jobIds:', jobIds);
     if (!jobIds.length) return [];
 
     const idsPipeline = this.db.multi();
@@ -115,8 +110,7 @@ export class DBActions {
     const fromList = `${queuifyKey}:${from}`;
     const toList = `${queuifyKey}:${to}`;
     const jobRuns = await this.db.lrange(fromList, 0, -1);
-    console.log('😊 -> DBActions -> moveJobsBetweenLists -> jobRuns:', jobRuns);
-    if (!jobRuns) return;
+    if (!jobRuns) return [];
     const jobMovePipeline = this.db.multi();
     for (const jobId of jobRuns) {
       // Move item from fromList's head(LEFT) to toList's tail(RIGHT).
@@ -137,27 +131,38 @@ export class DBActions {
     const queuifyKey = getQueuifyKey(queueName);
     const queuifyRunsKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.RUNS);
     const queuifyRunsJobKey = `${queuifyRunsKey}:${jobId}`;
-
-    // Check if jobId already exists in the hash
-    checkExisting(await this.db.exists(queuifyRunsJobKey), JOB_ALREADY_EXISTS(jobId, queueName));
-
-    // Add job data to a new stream and get the stream ID
-    const streamId = checkRequired(
-      await this.db.xadd(queuifyKey, '*', QUEUIFY_JOB_FIELDS.DATA, data),
-      OPERATION_FAILED(OPERATIONS.ADD, undefined, ENTITIES.JOB, jobId, ENTITIES.QUEUE, queueName),
-    );
-
-    // Create a new hash record with jobId and the streamId
-    await this.db.hset(
-      queuifyRunsJobKey,
-      QUEUIFY_JOB_FIELDS.JOB_ID,
-      streamId,
-      QUEUIFY_JOB_FIELDS.STATUS,
-      QUEUIFY_JOB_STATUS.PENDING,
-    );
-
-    // Add job id in the in progress list's head
     const queuifyRunsPendingKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.RUNS, QUEUIFY_JOB_STATUS.PENDING);
-    await this.db.lpush(queuifyRunsPendingKey, jobId);
+
+    const script = `
+    local queuifyRunsJobKey = KEYS[1]
+    local queuifyKey = KEYS[2]
+    local exists = redis.call('exists', queuifyRunsJobKey)
+    if exists == 1 then
+      return redis.error_reply('${JOB_ALREADY_EXISTS(jobId, queueName)}')
+    end
+    
+    local data = ARGV[1]
+    local streamId = redis.call('xadd', queuifyKey, '*', '${QUEUIFY_JOB_FIELDS.DATA}', data)
+    if not streamId then
+      return redis.error_reply('${OPERATION_FAILED(
+        OPERATIONS.ADD,
+        undefined,
+        ENTITIES.JOB,
+        jobId,
+        ENTITIES.QUEUE,
+        queueName,
+      )}')
+    end
+    
+    local jobStatusKey = '${QUEUIFY_JOB_FIELDS.STATUS}'
+    local jobStatusValue = '${QUEUIFY_JOB_STATUS.PENDING}'
+    redis.call('hset', queuifyRunsJobKey, '${QUEUIFY_JOB_FIELDS.JOB_ID}', streamId, jobStatusKey, jobStatusValue)
+    
+    local queuifyRunsPendingKey = KEYS[3]
+    local jobId = ARGV[2]
+    redis.call('lpush', queuifyRunsPendingKey, jobId)
+  `;
+
+    await this.db.eval(script, 3, queuifyRunsJobKey, queuifyKey, queuifyRunsPendingKey, data, jobId);
   }
 }
