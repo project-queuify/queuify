@@ -1,4 +1,4 @@
-import { randomUUID } from '../../index';
+import { randomUUID } from '../../helpers';
 
 describe('valid UUID', () => {
   let VALID_UUID_REGEX: RegExp;
