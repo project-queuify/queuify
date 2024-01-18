@@ -1,3 +1,4 @@
+/* eslint-disable no-var */
 import { Redis } from 'ioredis';
 import { EventEmitter } from 'node:events';
 
@@ -22,8 +23,8 @@ export type tGlobalQueueConfig = tCommonQueueConfig & {
 };
 
 declare global {
-  // eslint-disable-next-line no-var
   var queuifyConfig: tGlobalQueueConfig;
+  var redis: Redis;
 }
 
 export type tQueueConfig = tCommonQueueConfig & {
@@ -54,11 +55,15 @@ export type tJob = {
 };
 
 export type tWorkerFunction = (job: tJob) => Promise<unknown> | unknown;
+export type tWorkerConfig = {
+  type?: WORKER_TYPES;
+  sharedData?: unknown;
+};
 
 export type tQueueMapValue = {
   queue: tQueue;
   dbActions: InstanceType<typeof DBActions>;
-  workers: Map<string, { worker: tWorkerFunction; jobs: tJob[]; status: WORKER_STATUS }>;
+  workers: Map<string, { worker: tWorkerFunction; jobs: tJob[]; status: WORKER_STATUS; config: tWorkerConfig }>;
   idleWorkerId: string;
   isStalledJobsProcessingComplete: boolean;
 };

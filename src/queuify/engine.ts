@@ -1,9 +1,18 @@
 import { Redis } from 'ioredis';
 import { EventEmitter } from 'node:events';
+import { fork } from 'child_process';
+import { join as pathJoin } from 'path';
 
 import { DBActions, checkExisting, connectToDb, generateId, promisifyFunction } from '../helpers';
-import { tJob, tQueue, tQueueEngine, tQueueMapValue } from '../types';
-import { ENTITIES, ENGINE_STATUS, QUEUE_EVENTS, QUEUIFY_JOB_STATUS, WORKER_STATUS } from '../helpers/constants';
+import { tJob, tQueue, tQueueEngine, tQueueMapValue, tWorkerConfig } from '../types';
+import {
+  ENTITIES,
+  ENGINE_STATUS,
+  QUEUE_EVENTS,
+  QUEUIFY_JOB_STATUS,
+  WORKER_STATUS,
+  WORKER_TYPES,
+} from '../helpers/constants';
 import { ALREADY_EXISTS } from '../helpers/messages';
 
 class QueuifyEngine extends EventEmitter implements tQueueEngine {
@@ -60,13 +69,22 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     }
   }
 
-  public async addWorker(queueName: string, workerFunction: (...args: unknown[]) => unknown) {
+  public async addWorker(
+    queueName: string,
+    workerFunction: (...args: unknown[]) => unknown,
+    workerConfig: tWorkerConfig = {},
+  ) {
     const queue = this.queues.get(queueName);
     if (!queue) return;
 
     const hasWorkers = queue.workers.size > 0;
     const workerId = generateId();
-    queue.workers.set(workerId, { worker: workerFunction, jobs: [], status: WORKER_STATUS.IDLE });
+    queue.workers.set(workerId, {
+      worker: workerFunction,
+      jobs: [],
+      status: WORKER_STATUS.IDLE,
+      config: workerConfig,
+    });
 
     if (!hasWorkers) await this.startWorkers(queueName);
 
@@ -132,31 +150,61 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     }
     queue.idleWorkerId = idleWorkerId;
 
-    const workerFunction = promisifyFunction(workerData.worker);
-    if (!workerFunction) return;
+    if (!workerData.worker) return;
 
     let remainingJobs = workerData.jobs.length;
+    const isSandbox = workerData.config.type === WORKER_TYPES.SANDBOX;
+
+    const onComplete = async (jobId: string) => {
+      await queue.dbActions.completeJob(queueName, jobId);
+      this.emit(`${queueName}:${QUEUE_EVENTS.JOB_COMPLETE}`, jobId);
+    };
+
+    const onFailed = async (jobId: string, errorMessage: string) => {
+      await queue.dbActions.failJob(queueName, jobId, errorMessage);
+      this.emit(`${queueName}:${QUEUE_EVENTS.JOB_FAIL}`, jobId);
+    };
+
+    const onFinish = () => {
+      remainingJobs--;
+
+      if (!remainingJobs) {
+        workerData.status = WORKER_STATUS.IDLE;
+        queue.idleWorkerId = workerId;
+        this.emit(`${queueName}:${QUEUE_EVENTS.JOB_POOL_REQUEST}`, { queueName, workerId });
+      }
+    };
+
     while (workerData.jobs.length) {
       const job = workerData.jobs.pop();
       if (!job) break;
-      workerFunction(job)
-        .then(async () => {
-          await queue.dbActions.completeJob(queueName, job.id);
-          this.emit(`${queueName}:${QUEUE_EVENTS.JOB_COMPLETE}`, job.id);
-        })
-        .catch(async (error) => {
-          await queue.dbActions.failJob(queueName, job.id, error?.message);
-          this.emit(`${queueName}:${QUEUE_EVENTS.JOB_FAIL}`, job.id);
-        })
-        .finally(() => {
-          remainingJobs--;
 
-          if (!remainingJobs) {
-            workerData.status = WORKER_STATUS.IDLE;
-            queue.idleWorkerId = workerId;
-            this.emit(`${queueName}:${QUEUE_EVENTS.JOB_POOL_REQUEST}`, { queueName, workerId });
+      if (isSandbox) {
+        console.log('Spawning new sandbox');
+        const sandboxedProcess = fork(pathJoin(process.cwd(), './src/helpers/child_process.js'));
+
+        sandboxedProcess.on('message', async (result: { status: QUEUIFY_JOB_STATUS; error?: Error }) => {
+          if (result.status === QUEUIFY_JOB_STATUS.COMPLETED) {
+            await onComplete(job.id);
+          } else {
+            await onFailed(job.id, result?.error?.message || 'Something went wrong');
           }
+
+          onFinish();
         });
+        sandboxedProcess.send({
+          job,
+          workerFunction: workerData.worker.toString(),
+          sharedData: workerData.config.sharedData,
+        });
+        continue;
+      }
+
+      const workerFunction = promisifyFunction(workerData.worker);
+      workerFunction(job)
+        .then(async () => await onComplete(job.id))
+        .catch(async (error) => await onFailed(job.id, error?.message))
+        .finally(onFinish);
     }
   }
 

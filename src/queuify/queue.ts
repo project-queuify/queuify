@@ -3,7 +3,7 @@ import { Redis } from 'ioredis';
 import { checkRequired, compressData, connectToDb, generateId, withErrors } from '../helpers';
 import { ENTITIES, ENGINE_STATUS, PREFIXES } from '../helpers/constants';
 import { INVALID_JOB_DATA, REQUIRED } from '../helpers/messages';
-import { tDbConnectOptions, tQueue, tQueueConfig } from '../types';
+import { tDbConnectOptions, tQueue, tQueueConfig, tWorkerConfig } from '../types';
 import queuifyEngine from './engine';
 
 export default class Queue implements tQueue {
@@ -64,11 +64,21 @@ export default class Queue implements tQueue {
   }
 
   // TODO: Add support for named workers
-  async process(name: string, workerFilePath: string): Promise<unknown>;
-  async process(name: string, workerFunction: (...args: unknown[]) => unknown): Promise<unknown>;
+  async process(name: string, workerFilePath: string, workerConfig: tWorkerConfig): Promise<unknown>;
+  async process(
+    name: string,
+    workerFunction: (...args: unknown[]) => unknown,
+    workerConfig: tWorkerConfig,
+  ): Promise<unknown>;
+  async process(workerFilePath: string, workerConfig: tWorkerConfig): Promise<unknown>;
   async process(workerFilePath: string): Promise<unknown>;
+  async process(workerFunction: (...args: unknown[]) => unknown, workerConfig: tWorkerConfig): Promise<unknown>;
   async process(workerFunction: (...args: unknown[]) => unknown): Promise<unknown>;
-  async process(workerPathOrFunction: string | unknown): Promise<unknown> {
+  async process(
+    workerPathOrFunction: string | ((...args: unknown[]) => unknown),
+    workerFilePathOrConfig?: string | tWorkerConfig | ((...args: unknown[]) => unknown),
+    workerConfig?: tWorkerConfig,
+  ): Promise<unknown> {
     const workerFunction =
       typeof workerPathOrFunction === 'string' ? await import(workerPathOrFunction) : workerPathOrFunction;
 
@@ -76,7 +86,9 @@ export default class Queue implements tQueue {
       throw new Error('Worker function is required');
     }
 
-    return await queuifyEngine.addWorker(this.name, workerFunction);
+    const config = typeof workerFilePathOrConfig === 'object' ? workerFilePathOrConfig : workerConfig;
+
+    return await queuifyEngine.addWorker(this.name, workerFunction, config);
   }
 
   batch = (job: unknown) => {
