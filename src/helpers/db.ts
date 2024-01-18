@@ -2,7 +2,7 @@
 import Redis from 'ioredis';
 
 import { tDbConnectOptions } from '../types';
-import { checkExisting, checkRequired, decompressData, getQueuifyKey } from './utils';
+import { decompressData, getQueuifyKey } from './utils';
 import { JOB_ALREADY_EXISTS, OPERATION_FAILED } from './messages';
 import {
   ENTITIES,
