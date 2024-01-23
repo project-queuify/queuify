@@ -8,29 +8,24 @@ const dfQueue = new Queue('first-queue-df', 'redis://127.0.0.1:6380', { connectT
 
 global.redis = new Redis();
 
-const worker = (job: unknown) => {
-  console.log(global.redis?.options?.port);
-  const random = Math.random();
-  if (random > 0.5) {
-    throw new Error('Something went wrong');
-  }
-  console.log('😊 -> worker -> job:', JSON.stringify(job));
-};
+redisQueue.process(
+  { workerFilePath: '../../workers/worker', workerFuncName: 'worker' },
+  { sharedData: { global: { redis: global.redis } } },
+);
+// dfQueue.process(worker, { type: WORKER_TYPES.SANDBOX, sharedData: { global: { redis: global.redis } } });
 
-redisQueue.process(worker, { type: WORKER_TYPES.SANDBOX, sharedData: { global: { redis: global.redis } } });
-dfQueue.process(worker, { type: WORKER_TYPES.SANDBOX, sharedData: { global: { redis: global.redis } } });
+redisQueue.schedule('Hello World! rd').catch(console.error);
+// for (let index = 0; index < 5; index++) {
+//   redisQueue.schedule('Hello World! rd' + index).catch(console.error);
+//   dfQueue.schedule('Hello World! df' + index).catch(console.error);
+// }
 
-for (let index = 0; index < 5; index++) {
-  redisQueue.schedule('Hello World! rd' + index).catch(console.error);
-  dfQueue.schedule('Hello World! df' + index).catch(console.error);
-}
-
-setTimeout(() => {
-  for (let index = 0; index < 5; index++) {
-    redisQueue.schedule('Hello World! rd' + index).catch(console.error);
-    dfQueue.schedule('Hello World! df' + index).catch(console.error);
-  }
-}, 10000);
+// setTimeout(() => {
+//   for (let index = 0; index < 5; index++) {
+//     redisQueue.schedule('Hello World! rd' + index).catch(console.error);
+//     dfQueue.schedule('Hello World! df' + index).catch(console.error);
+//   }
+// }, 10000);
 
 redisQueue.on(QUEUE_EVENTS.JOB_COMPLETE, (data) => {
   return console.log('Listened from queue', data);

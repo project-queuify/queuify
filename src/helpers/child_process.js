@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 const promisifyFunction =
   (fn) =>
   (...args) =>
@@ -15,21 +16,40 @@ const promisifyFunction =
     });
 
 process.on('message', (data) => {
-  const job = data.job;
-  const sharedData = data.sharedData;
-  const worker = promisifyFunction(new Function('return ' + data.workerFunction)());
-  if (sharedData?.global) {
-    for (const [key, value] of Object.entries(sharedData.global)) {
-      global[key] = value;
+  try {
+    const job = data.job;
+    const sharedData = data.sharedData;
+    if (sharedData?.global) {
+      for (const [key, value] of Object.entries(sharedData.global)) {
+        global[key] = value;
+      }
     }
+    const sourceData = data.workerSource;
+    const { workerFilePath, workerFuncName } = sourceData;
+    const workerFile = require(workerFilePath);
+    const worker = promisifyFunction(workerFile[workerFuncName]);
+    worker(job)
+      .then((result) => {
+        process.send({ status: 'completed', result });
+      })
+      .catch((error) => {
+        process.send({ status: 'failed', error });
+      });
+  } catch (error) {
+    let cleanedError = error;
+    try {
+      // Clean ansi from the terminal output!
+      cleanedError = {
+        message: error?.message?.replace?.(
+          // eslint-disable-next-line no-control-regex
+          /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
+          '',
+        ),
+        ...error,
+      };
+    } catch (_error) {
+      // Do nothing if there's an error
+    }
+    process.send({ status: 'failed', error: cleanedError });
   }
-  worker(job)
-    .then((result) => {
-      console.log('😊 -> .then -> result:', result);
-      process.send({ status: 'completed', result });
-    })
-    .catch((error) => {
-      console.log('😊 -> process.on -> error:', error);
-      process.send({ status: 'failed', error });
-    });
 });

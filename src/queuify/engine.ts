@@ -1,10 +1,10 @@
 import { Redis } from 'ioredis';
 import { EventEmitter } from 'node:events';
-import { fork } from 'child_process';
+import { fork, ChildProcess } from 'child_process';
 import { join as pathJoin } from 'path';
 
 import { DBActions, checkExisting, connectToDb, generateId, promisifyFunction } from '../helpers';
-import { tJob, tQueue, tQueueEngine, tQueueMapValue, tWorkerConfig } from '../types';
+import { tJob, tQueue, tQueueEngine, tQueueMapValue, tWorkerConfig, tWorkerSandboxSource } from '../types';
 import {
   ENTITIES,
   ENGINE_STATUS,
@@ -71,7 +71,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
 
   public async addWorker(
     queueName: string,
-    workerFunction: (...args: unknown[]) => unknown,
+    workerFunction: tWorkerSandboxSource | ((...args: unknown[]) => unknown),
     workerConfig: tWorkerConfig = {},
   ) {
     const queue = this.queues.get(queueName);
@@ -165,7 +165,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       this.emit(`${queueName}:${QUEUE_EVENTS.JOB_FAIL}`, jobId);
     };
 
-    const onFinish = () => {
+    const onFinish = (process?: ChildProcess) => {
       remainingJobs--;
 
       if (!remainingJobs) {
@@ -173,6 +173,8 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
         queue.idleWorkerId = workerId;
         this.emit(`${queueName}:${QUEUE_EVENTS.JOB_POOL_REQUEST}`, { queueName, workerId });
       }
+
+      if (process) process.kill();
     };
 
     while (workerData.jobs.length) {
@@ -184,23 +186,38 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
         const sandboxedProcess = fork(pathJoin(process.cwd(), './src/helpers/child_process.js'));
 
         sandboxedProcess.on('message', async (result: { status: QUEUIFY_JOB_STATUS; error?: Error }) => {
-          if (result.status === QUEUIFY_JOB_STATUS.COMPLETED) {
-            await onComplete(job.id);
-          } else {
-            await onFailed(job.id, result?.error?.message || 'Something went wrong');
+          try {
+            if (result.status === QUEUIFY_JOB_STATUS.COMPLETED) {
+              await onComplete(job.id);
+            } else {
+              await onFailed(job.id, result?.error?.message || 'Something went wrong');
+            }
+          } catch (error) {
+            this.debugLog(`An error while processing sandbox message for job "${job.id}"!`, error);
+          } finally {
+            onFinish(sandboxedProcess);
           }
-
-          onFinish();
         });
+
+        sandboxedProcess.on('error', async (error) => {
+          try {
+            await onFailed(job.id, `Spawn Failed! ${error?.message || 'Something went wrong'}`);
+          } catch (error) {
+            this.debugLog(`An error while spawning sandbox for job "${job.id}"!`, error);
+          } finally {
+            onFinish(sandboxedProcess);
+          }
+        });
+
         sandboxedProcess.send({
           job,
-          workerFunction: workerData.worker.toString(),
+          workerSource: workerData.worker,
           sharedData: workerData.config.sharedData,
         });
         continue;
       }
 
-      const workerFunction = promisifyFunction(workerData.worker);
+      const workerFunction = promisifyFunction(workerData.worker as (...args: unknown[]) => unknown);
       workerFunction(job)
         .then(async () => await onComplete(job.id))
         .catch(async (error) => await onFailed(job.id, error?.message))

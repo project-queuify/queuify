@@ -1,9 +1,10 @@
+import path from 'path';
 import { Redis } from 'ioredis';
 
-import { checkRequired, compressData, connectToDb, generateId, withErrors } from '../helpers';
-import { ENTITIES, ENGINE_STATUS, PREFIXES } from '../helpers/constants';
+import { callSites, checkRequired, compressData, connectToDb, generateId, withErrors } from '../helpers';
+import { ENTITIES, ENGINE_STATUS, PREFIXES, WORKER_TYPES } from '../helpers/constants';
 import { INVALID_JOB_DATA, REQUIRED } from '../helpers/messages';
-import { tDbConnectOptions, tQueue, tQueueConfig, tWorkerConfig } from '../types';
+import { tDbConnectOptions, tQueue, tQueueConfig, tWorkerConfig, tWorkerSandboxSource } from '../types';
 import queuifyEngine from './engine';
 
 export default class Queue implements tQueue {
@@ -64,31 +65,47 @@ export default class Queue implements tQueue {
   }
 
   // TODO: Add support for named workers
-  async process(name: string, workerFilePath: string, workerConfig: tWorkerConfig): Promise<unknown>;
+  async process(name: string, workerFile: tWorkerSandboxSource, workerConfig: tWorkerConfig): Promise<unknown>;
   async process(
     name: string,
     workerFunction: (...args: unknown[]) => unknown,
     workerConfig: tWorkerConfig,
   ): Promise<unknown>;
-  async process(workerFilePath: string, workerConfig: tWorkerConfig): Promise<unknown>;
-  async process(workerFilePath: string): Promise<unknown>;
+  async process(workerFile: tWorkerSandboxSource, workerConfig: tWorkerConfig): Promise<unknown>;
+  async process(workerFile: tWorkerSandboxSource): Promise<unknown>;
   async process(workerFunction: (...args: unknown[]) => unknown, workerConfig: tWorkerConfig): Promise<unknown>;
   async process(workerFunction: (...args: unknown[]) => unknown): Promise<unknown>;
   async process(
-    workerPathOrFunction: string | ((...args: unknown[]) => unknown),
-    workerFilePathOrConfig?: string | tWorkerConfig | ((...args: unknown[]) => unknown),
+    workerNameOrSourceOrFunction: string | tWorkerSandboxSource | ((...args: unknown[]) => unknown),
+    workerSourceOrConfig?: tWorkerSandboxSource | tWorkerConfig | ((...args: unknown[]) => unknown),
     workerConfig?: tWorkerConfig,
   ): Promise<unknown> {
-    const workerFunction =
-      typeof workerPathOrFunction === 'string' ? await import(workerPathOrFunction) : workerPathOrFunction;
+    const workerSource = (
+      typeof workerNameOrSourceOrFunction === 'string' ? workerSourceOrConfig : workerNameOrSourceOrFunction
+    ) as tWorkerSandboxSource | ((...args: unknown[]) => unknown);
 
-    if (typeof workerFunction !== 'function') {
-      throw new Error('Worker function is required');
+    // TODO: In future, add support for normal functions in sandbox mode in context sharing solution is found!
+    const isSandbox = typeof workerSource === 'object';
+
+    const config = (
+      typeof workerNameOrSourceOrFunction === 'string' ? workerConfig : workerSourceOrConfig
+    ) as tWorkerConfig;
+
+    if (isSandbox) {
+      config.type = WORKER_TYPES.SANDBOX;
+      const stack = callSites();
+
+      if (!stack[1]) {
+        throw new Error('Stack is not sufficient!');
+      }
+
+      workerSource.workerFilePath = path.join(
+        stack[1].getFileName()?.match(/.+(?=\/)/g)?.[0] || '',
+        workerSource.workerFilePath,
+      );
     }
 
-    const config = typeof workerFilePathOrConfig === 'object' ? workerFilePathOrConfig : workerConfig;
-
-    return await queuifyEngine.addWorker(this.name, workerFunction, config);
+    return await queuifyEngine.addWorker(this.name, workerSource, config);
   }
 
   batch = (job: unknown) => {
