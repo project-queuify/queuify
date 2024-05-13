@@ -41,6 +41,7 @@ export enum QUEUE_EVENTS {
   JOB_POOL_REQUEST = 'job-pool:request',
   JOB_POOL_PROCESS = 'job-pool:process',
   JOB_COMPLETE = 'job:complete',
+  JOB_UPDATE = 'job:update',
   JOB_FAIL = 'job:fail',
 }
 
@@ -70,3 +71,8 @@ export enum DB_FIELDS {
   LEFT = 'LEFT',
   RIGHT = 'RIGHT',
 }
+
+export const MISC = {
+  MESSAGE: 'message',
+  ERROR: 'error',
+};

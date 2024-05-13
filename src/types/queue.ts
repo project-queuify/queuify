@@ -60,6 +60,9 @@ export declare class tQueueEngine extends EventEmitter {
 export type tJob = {
   id: string;
   data: unknown;
+  complete: (result: unknown) => Promise<unknown>;
+  update: (data: unknown) => Promise<unknown>;
+  failed: (error: unknown) => Promise<unknown>;
 };
 
 export type tWorkerFunction = (job: tJob) => Promise<unknown> | unknown;
@@ -67,10 +70,13 @@ export type tWorkerSandboxSource = {
   workerFilePath: string;
   workerFuncName: string;
 };
+export type tUnknownObject = Record<string, unknown>;
 export type tWorkerConfig = {
   type?: WORKER_TYPES;
-  sharedData?: unknown;
+  sharedData?: tUnknownObject;
 };
+
+export type tPlainJob = Omit<tJob, 'complete' | 'update' | 'failed'>;
 
 export type tQueueMapValue = {
   queue: tQueue;
@@ -79,11 +85,12 @@ export type tQueueMapValue = {
     string,
     {
       worker: tWorkerSandboxSource | ((...args: unknown[]) => unknown);
-      jobs: tJob[];
+      jobs: tPlainJob[];
       status: WORKER_STATUS;
       config: tWorkerConfig;
     }
   >;
   idleWorkerId: string;
   isStalledJobsProcessingComplete: boolean;
+  shouldCompressData: boolean;
 };

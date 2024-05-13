@@ -1,10 +1,36 @@
 import { Redis } from 'ioredis';
 import { EventEmitter } from 'node:events';
-import { fork, ChildProcess } from 'child_process';
+import { createServer, AddressInfo } from 'node:net';
+import { spawn, ChildProcess } from 'child_process';
 import { join as pathJoin } from 'path';
 
-import { DBActions, checkExisting, connectToDb, generateId, promisifyFunction } from '../helpers';
-import { tJob, tQueue, tQueueEngine, tQueueMapValue, tWorkerConfig, tWorkerSandboxSource } from '../types';
+const server = createServer((socket) => {
+  console.log('got socket connection');
+  socket.on('data', (stream) => {
+    console.log(stream.toString());
+  });
+});
+
+server.on('connection', () => {
+  console.log('someone connected to server');
+});
+
+let serverPort: number
+server.listen(() => {
+  serverPort = (server.address() as AddressInfo)?.port
+  console.log(`Server port`, serverPort);
+});
+
+import {
+  DBActions,
+  checkExisting,
+  compressData,
+  connectToDb,
+  generateId,
+  promisifyFunction,
+  withErrors,
+} from '../helpers';
+import { tJob, tPlainJob, tQueue, tQueueEngine, tQueueMapValue, tWorkerConfig, tWorkerSandboxSource } from '../types';
 import {
   ENTITIES,
   ENGINE_STATUS,
@@ -12,8 +38,12 @@ import {
   QUEUIFY_JOB_STATUS,
   WORKER_STATUS,
   WORKER_TYPES,
+  MISC,
+  PREFIXES,
 } from '../helpers/constants';
-import { ALREADY_EXISTS } from '../helpers/messages';
+import { ALREADY_EXISTS, INVALID_JOB_DATA } from '../helpers/messages';
+
+export const shouldCompressData = !!globalThis.queuifyConfig?.compressData;
 
 class QueuifyEngine extends EventEmitter implements tQueueEngine {
   status = ENGINE_STATUS.NONE;
@@ -32,7 +62,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       this.globalDb = connectToDb(...globalThis.queuifyConfig.dbOptions);
     }
 
-    // Engine is started!
+    // The Engine is started!
     this.status = ENGINE_STATUS.RUNNING;
   }
 
@@ -42,7 +72,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     }
   }
 
-  public start(queue: tQueue) {
+  public start(queue: tQueue, shouldCompressData = false) {
     if (!queue.db) throw new Error('Queue db is required');
 
     const queueName = queue.name;
@@ -54,6 +84,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       workers: new Map(),
       idleWorkerId: '',
       isStalledJobsProcessingComplete: false,
+      shouldCompressData,
     });
     this.emit(QUEUE_EVENTS.QUEUE_ADD, queueName);
   }
@@ -109,7 +140,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     if (!workerData) return;
 
     // First prioritize stalled jobs
-    let jobs: tJob[] = [];
+    let jobs: tPlainJob[] = [];
     if (!queue.isStalledJobsProcessingComplete) {
       jobs = await queue.dbActions.getJobs(queueName, QUEUIFY_JOB_STATUS.STALLED);
       if (!jobs.length) {
@@ -160,6 +191,27 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       this.emit(`${queueName}:${QUEUE_EVENTS.JOB_COMPLETE}`, jobId);
     };
 
+    const onUpdate = async (job: tJob, newData: unknown) => {
+      const existingData = job.data;
+      if (typeof newData === 'object' && existingData && typeof existingData === 'object') {
+        const mergedData = { ...existingData, ...newData };
+        newData = mergedData;
+      }
+      job.data = newData;
+      const preparedData = withErrors(
+        job.data,
+        queue.shouldCompressData ? compressData : JSON.stringify,
+        INVALID_JOB_DATA,
+      );
+      const jobId = job.id;
+      await queue.dbActions.updateJob(
+        queueName,
+        job.id,
+        queue.shouldCompressData ? PREFIXES.LZ_CACHED + preparedData : preparedData,
+      );
+      this.emit(`${queueName}:${QUEUE_EVENTS.JOB_UPDATE}`, jobId);
+    };
+
     const onFailed = async (jobId: string, errorMessage: string) => {
       await queue.dbActions.failJob(queueName, jobId, errorMessage);
       this.emit(`${queueName}:${QUEUE_EVENTS.JOB_FAIL}`, jobId);
@@ -178,28 +230,72 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     };
 
     while (workerData.jobs.length) {
-      const job = workerData.jobs.pop();
+      const job = workerData.jobs.pop() as tJob;
       if (!job) break;
+
+      job.complete = async () => {
+        await onComplete(job.id);
+      };
+      job.update = async (data) => {
+        await onUpdate(job, data);
+      };
+      job.failed = async (error) => {
+        const errorMessage =
+          (error as Error)?.message || (typeof error === 'string' && error) || 'Something went wrong';
+        await onFailed(job.id, errorMessage);
+      };
 
       if (isSandbox) {
         console.log('Spawning new sandbox');
-        const sandboxedProcess = fork(pathJoin(process.cwd(), './src/helpers/child_process.js'));
+        const cpPath = pathJoin(process.cwd(), './lib/helpers/child_process.js');
+        // TODO: We are using ts-node just in case worker files are typescript ones!
+        const sandboxedProcess = spawn( 'ts-node', [cpPath], {stdio: ['inherit', 'inherit', 'inherit', 'ipc']});
 
-        sandboxedProcess.on('message', async (result: { status: QUEUIFY_JOB_STATUS; error?: Error }) => {
-          try {
-            if (result.status === QUEUIFY_JOB_STATUS.COMPLETED) {
-              await onComplete(job.id);
-            } else {
-              await onFailed(job.id, result?.error?.message || 'Something went wrong');
+        sandboxedProcess.on(
+          MISC.MESSAGE,
+          async (response: {
+            action: QUEUE_EVENTS;
+            data?: unknown; // New job data during job update
+            eventId?: string;
+            error?: Error;
+          }) => {
+            try {
+              console.log('😊 -> QueuifyEngine -> onJobsProcess -> response.action:', response.action, JSON.stringify(response));
+              switch (response.action) {
+                case QUEUE_EVENTS.JOB_UPDATE: {
+                  const eventId = response.eventId;
+                  if (!eventId) return;
+                  await onUpdate(job, response.data);
+                  console.log('Sending to sandbox', eventId);
+                  console.log('😊 -> QueuifyEngine -> onJobsProcess -> sandboxedProcess.send:', sandboxedProcess.send);
+                  sandboxedProcess.send(
+                    {
+                      eventId,
+                      data: job.data,
+                    },
+                    console.error,
+                  );
+                  console.log('Sent to sandbox', eventId);
+                  break;
+                }
+                case QUEUE_EVENTS.JOB_COMPLETE: {
+                  await onComplete(job.id);
+                  break;
+                }
+                case QUEUE_EVENTS.JOB_FAIL: {
+                  await onFailed(job.id, response?.error?.message || 'Something went wrong');
+                  break;
+                }
+              }
+            } catch (error) {
+              this.debugLog(`An error while processing sandbox message for job "${job.id}"!`, error);
+            } finally {
+              onFinish(sandboxedProcess);
             }
-          } catch (error) {
-            this.debugLog(`An error while processing sandbox message for job "${job.id}"!`, error);
-          } finally {
-            onFinish(sandboxedProcess);
-          }
-        });
+          },
+        );
 
-        sandboxedProcess.on('error', async (error) => {
+        sandboxedProcess.on(MISC.ERROR, async (error) => {
           try {
             await onFailed(job.id, `Spawn Failed! ${error?.message || 'Something went wrong'}`);
           } catch (error) {

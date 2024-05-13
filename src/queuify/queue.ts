@@ -5,12 +5,12 @@ import { callSites, checkRequired, compressData, connectToDb, generateId, withEr
 import { ENTITIES, ENGINE_STATUS, PREFIXES, WORKER_TYPES } from '../helpers/constants';
 import { INVALID_JOB_DATA, REQUIRED } from '../helpers/messages';
 import { tDbConnectOptions, tQueue, tQueueConfig, tWorkerConfig, tWorkerSandboxSource } from '../types';
-import queuifyEngine from './engine';
+import queuifyEngine, { shouldCompressData } from './engine';
 
 export default class Queue implements tQueue {
   public db;
   public name;
-  private compressData = !!globalThis.queuifyConfig?.compressData;
+  private shouldCompressData = shouldCompressData;
 
   constructor(config: tQueueConfig, ...dbOpts: tDbConnectOptions);
   constructor(name: string, ...dbOpts: tDbConnectOptions);
@@ -21,7 +21,7 @@ export default class Queue implements tQueue {
     }
     const isQueueConfigProvided = typeof args[0] === 'object';
     const queueConfig = isQueueConfigProvided ? (args[0] as tQueueConfig) : null;
-    if (queueConfig?.compressData !== undefined) this.compressData = !!(args[0] as tQueueConfig).compressData;
+    if (queueConfig?.compressData !== undefined) this.shouldCompressData = !!(args[0] as tQueueConfig).compressData;
 
     this.name = typeof args[0] === 'string' ? args[0] : isQueueConfigProvided ? (args[0] as tQueueConfig).name : '';
 
@@ -40,7 +40,7 @@ export default class Queue implements tQueue {
       throw new Error('Database connection is required');
     }
 
-    queuifyEngine.start(this);
+    queuifyEngine.start(this, this.shouldCompressData);
   }
 
   public on(eventName: string, listener: (...args: unknown[]) => unknown): unknown {
@@ -51,14 +51,14 @@ export default class Queue implements tQueue {
   async schedule(data: unknown): Promise<unknown>;
   async schedule(jobIdOrData: string | unknown, data?: unknown): Promise<unknown> {
     const jobData = data ?? jobIdOrData;
-    const preparedData = withErrors(jobData, this.compressData ? compressData : JSON.stringify, INVALID_JOB_DATA);
+    const preparedData = withErrors(jobData, this.shouldCompressData ? compressData : JSON.stringify, INVALID_JOB_DATA);
     const jobId = arguments.length === 2 ? (jobIdOrData as string) : generateId();
 
     const queueData = checkRequired(queuifyEngine.queues.get(this.name), REQUIRED(ENTITIES.QUEUE));
     await queuifyEngine.addJob(
       queueData.queue.name,
       jobId,
-      this.compressData ? PREFIXES.LZ_CACHED + preparedData : preparedData,
+      this.shouldCompressData ? PREFIXES.LZ_CACHED + preparedData : preparedData,
     );
 
     return null;

@@ -54,3 +54,5 @@ export const OPERATION_FAILED = (
   `Could not ${operation} the ${entity ? ` ${entity}` : ''}${entityName ? ` "${entityName}"` : ''}${
     parentEntity ? ` in ${parentEntity}` : ''
   }${parentEntityName ? ` "${parentEntityName}"` : ''}!${message ? ` ${message}` : ''}`;
+
+export const EVENT_TIMED_OUT = (eventName: string) => `Timed out waiting for event "${eventName}"`;

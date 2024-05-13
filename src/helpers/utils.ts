@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/ban-types */
 import { compress, decompress } from 'lz-string';
 import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import uniqid from 'uniqid';
-import { PREFIXES, QUEUIFY_KEY_TYPES, QUEUIFY_JOB_STATUS } from './constants';
+import { PREFIXES, QUEUIFY_KEY_TYPES, QUEUIFY_JOB_STATUS, MISC } from './constants';
+import { EVENT_TIMED_OUT } from './messages';
 
 /**
  * Generates a random UUID.
@@ -96,8 +98,11 @@ export const compressData = (data: unknown): string => compress(JSON.stringify(d
  * @param {string} data - The compressed data string to be decompressed.
  * @return {unknown} The decompressed data.
  */
-export const decompressData = (data: string): unknown =>
-  JSON.parse(data.startsWith(PREFIXES.LZ_CACHED) ? decompress(data.slice(PREFIXES.LZ_CACHED.length)) : data);
+export const decompressData = (data: string): unknown => {
+  console.log('😊 -> decompressData -> data:', data);
+  console.log('😊 -> decompressData -> PREFIXES.LZ_CACHED:', PREFIXES.LZ_CACHED);
+  return JSON.parse(data.startsWith(PREFIXES.LZ_CACHED) ? decompress(data.slice(PREFIXES.LZ_CACHED.length)) : data);
+};
 
 /**
  * Converts a string to title case.
@@ -143,3 +148,33 @@ export function callSites() {
     Error.prepareStackTrace = _prepareStackTrace;
   }
 }
+
+export const waitForProcessResponse = async (
+  process: NodeJS.Process,
+  processData: Record<string, unknown>,
+  maxWait = 1000,
+) => {
+  console.log('😊 -> maxWait:', maxWait);
+  const eventName = processData?.eventId as string;
+  console.log('😊 -> eventName:', eventName);
+  if (!eventName) return;
+  const promise =  new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      console.log('timeout triggered', eventName);
+      reject(new Error(EVENT_TIMED_OUT(eventName)));
+    }, maxWait);
+    console.log('Triggering timeout after', maxWait)
+    process.on(MISC.MESSAGE, (data: { eventId: string }) => {
+      console.log('😊 -> process.on -> data inside:', data.eventId, eventName);
+      if (data.eventId !== eventName) return;
+      console.log('Clearing timeout');
+      clearTimeout(timeout);
+      console.log('Resolving', data);
+      resolve(data);
+    });
+    console.log('😊 -> returnnewPromise -> process.send:', process.send, processData);
+    process.send?.(processData);
+  });
+
+  return await promise
+};

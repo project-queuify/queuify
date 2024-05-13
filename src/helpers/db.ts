@@ -3,15 +3,8 @@ import Redis from 'ioredis';
 
 import { tDbConnectOptions } from '../types';
 import { decompressData, getQueuifyKey } from './utils';
-import { JOB_ALREADY_EXISTS, OPERATION_FAILED } from './messages';
-import {
-  ENTITIES,
-  OPERATIONS,
-  QUEUIFY_KEY_TYPES,
-  QUEUIFY_JOB_STATUS,
-  QUEUIFY_JOB_FIELDS,
-  DB_FIELDS,
-} from './constants';
+import { JOB_ALREADY_EXISTS } from './messages';
+import { QUEUIFY_KEY_TYPES, QUEUIFY_JOB_STATUS, QUEUIFY_JOB_FIELDS, DB_FIELDS } from './constants';
 
 export const connectToDb = (...args: tDbConnectOptions): Redis => {
   const redis = !args.length
@@ -52,7 +45,7 @@ export class DBActions {
     const statusPipeline = this.db.multi();
 
     for (const jobId of jobIds) {
-      jobsPipeline.hmget(`${queuifyRunsKey}:${jobId}`, QUEUIFY_JOB_FIELDS.DATA, QUEUIFY_JOB_FIELDS.JOB_ID);
+      jobsPipeline.hmget(`${queuifyRunsKey}:${jobId}`, QUEUIFY_JOB_FIELDS.JOB_ID, QUEUIFY_JOB_FIELDS.DATA);
       statusPipeline.hset(`${queuifyRunsKey}:${jobId}`, QUEUIFY_JOB_FIELDS.STATUS, QUEUIFY_JOB_STATUS.RUNNING);
     }
     const results = await Promise.allSettled([jobsPipeline.exec(), statusPipeline.exec()]);
@@ -80,6 +73,12 @@ export class DBActions {
     await jobPipeline.exec();
   }
 
+  public async updateJob(queueName: string, jobId: string, newData: string) {
+    const queuifyRunsKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.RUNS);
+    const queuifyRunsJobKey = `${queuifyRunsKey}:${jobId}`;
+    await this.db.hset(queuifyRunsJobKey, QUEUIFY_JOB_FIELDS.DATA, newData);
+  }
+
   public async failJob(queueName: string, jobId: string, failedReason: string) {
     const queuifyKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.RUNS);
     const jobPipeline = this.db.multi();
@@ -94,6 +93,7 @@ export class DBActions {
     jobPipeline.lpush(`${queuifyKey}:${QUEUIFY_JOB_STATUS.FAILED}`, jobId);
     await jobPipeline.exec();
   }
+
   public async moveJobsBetweenLists(queueName: string, from: QUEUIFY_JOB_STATUS, to: QUEUIFY_JOB_STATUS) {
     const queuifyKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.RUNS);
     const fromList = `${queuifyKey}:${from}`;
@@ -106,7 +106,7 @@ export class DBActions {
       // L1 = 3,2,1
       // L2 = 6,5,4
       // Moving head to tail makes L2 6,5,4,3,2,1
-      // When Engine will pop from tail, It will process in a order of 3,2,1 which is desired order
+      // When the Engine will pop from tail, It will process in an order of 3,2,1 which is desired order
       jobMovePipeline.lmove(fromList, toList, DB_FIELDS.LEFT, DB_FIELDS.RIGHT);
       jobMovePipeline.hset(`${queuifyKey}:${jobId}`, QUEUIFY_JOB_FIELDS.STATUS, to);
     }
