@@ -34,6 +34,7 @@ export enum WORKER_STATUS {
   IDLE,
   BUSY,
 }
+
 export enum QUEUE_EVENTS {
   QUEUE_ADD = 'queue:add',
   WORKER_ADD = 'worker:add',
@@ -73,6 +74,8 @@ export enum DB_FIELDS {
 }
 
 export const MISC = {
-  MESSAGE: 'message',
+  DATA: 'data',
   ERROR: 'error',
+  MESSAGE: 'message',
+  CONNECTION: 'connection',
 };

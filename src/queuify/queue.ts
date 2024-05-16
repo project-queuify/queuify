@@ -7,6 +7,7 @@ import { INVALID_JOB_DATA, REQUIRED } from '../helpers/messages';
 import { tDbConnectOptions, tQueue, tQueueConfig, tWorkerConfig, tWorkerSandboxSource } from '../types';
 import queuifyEngine, { shouldCompressData } from './engine';
 
+// noinspection Annotator
 export default class Queue implements tQueue {
   public db;
   public name;
@@ -105,6 +106,7 @@ export default class Queue implements tQueue {
       );
     }
 
+    config.type ??= WORKER_TYPES.EMBEDDED;
     return await queuifyEngine.addWorker(this.name, workerSource, config);
   }
 

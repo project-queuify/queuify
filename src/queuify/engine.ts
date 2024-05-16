@@ -1,45 +1,37 @@
 import { Redis } from 'ioredis';
 import { EventEmitter } from 'node:events';
-import { createServer, AddressInfo } from 'node:net';
-import { spawn, ChildProcess } from 'child_process';
+import { AddressInfo, createServer, Server } from 'node:net';
+import { ChildProcess, spawn } from 'child_process';
 import { join as pathJoin } from 'path';
 
-const server = createServer((socket) => {
-  console.log('got socket connection');
-  socket.on('data', (stream) => {
-    console.log(stream.toString());
-  });
-});
-
-server.on('connection', () => {
-  console.log('someone connected to server');
-});
-
-let serverPort: number
-server.listen(() => {
-  serverPort = (server.address() as AddressInfo)?.port
-  console.log(`Server port`, serverPort);
-});
-
 import {
-  DBActions,
   checkExisting,
   compressData,
   connectToDb,
+  DBActions,
   generateId,
   promisifyFunction,
   withErrors,
 } from '../helpers';
-import { tJob, tPlainJob, tQueue, tQueueEngine, tQueueMapValue, tWorkerConfig, tWorkerSandboxSource } from '../types';
 import {
-  ENTITIES,
+  tJob,
+  tPlainJob,
+  tQueue,
+  tQueueEngine,
+  tQueueMapValue,
+  tUnknownObject,
+  tWorkerConfig,
+  tWorkerSandboxSource,
+} from '../types';
+import {
   ENGINE_STATUS,
+  ENTITIES,
+  MISC,
+  PREFIXES,
   QUEUE_EVENTS,
   QUEUIFY_JOB_STATUS,
   WORKER_STATUS,
   WORKER_TYPES,
-  MISC,
-  PREFIXES,
 } from '../helpers/constants';
 import { ALREADY_EXISTS, INVALID_JOB_DATA } from '../helpers/messages';
 
@@ -49,9 +41,12 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
   status = ENGINE_STATUS.NONE;
   debug = !!globalThis.queuifyConfig?.debug;
   queues: Map<string, tQueueMapValue> = new Map();
-  // Queue Engine can have their own DB which is set only when we have global option available.
+  // Queue Engine can have their own DB which is set only when we have a global option available.
   // When creating a Queue without DB options, It will use this global connection!
   globalDb: Redis | null = null;
+  server!: Server;
+  private serverAddress!: AddressInfo;
+  private jobUpdaters: Map<string, (newData: tUnknownObject | string) => Promise<void>> = new Map();
 
   constructor() {
     super();
@@ -62,13 +57,69 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       this.globalDb = connectToDb(...globalThis.queuifyConfig.dbOptions);
     }
 
+    // Initialize server to communicate with a child process
+    this.initializeCommunicationServer();
+
     // The Engine is started!
     this.status = ENGINE_STATUS.RUNNING;
   }
 
+  private initializeCommunicationServer() {
+    this.server = createServer();
+
+    this.server.on(MISC.CONNECTION, (socket) => {
+      this.debugLog('Child process connected via socket');
+      socket.on(MISC.DATA, (stream: Buffer) => {
+        const payload = JSON.parse(stream.toString());
+        const jobId = payload.jobId;
+        this.debugLog(
+          `Update request received from child process for job ${jobId} with new data being "${JSON.stringify(
+            payload.data,
+          )}"`,
+        );
+        const updater = this.jobUpdaters.get(jobId);
+        if (!updater) {
+          this.debugLog(
+            `No updater was found for job ${jobId},`,
+            'This is likely to be an error with Queuify Engine. Kindly Report it to us!',
+          );
+          return;
+        }
+        updater(payload.data)
+          .then(() => {
+            socket.write(JSON.stringify({ eventId: payload.eventId }));
+          })
+          .catch((error) => {
+            const errorMessage =
+              error instanceof Error ? error.message : 'Error while updating job data for child process';
+            socket.write(JSON.stringify({ eventId: payload.eventId, errorMessage }));
+            this.debugError(errorMessage, error);
+          });
+      });
+    });
+
+    this.server.listen(() => {
+      const address = this.server.address();
+      if (!address) return;
+      if (typeof address === 'string') {
+        const addressSplit = address.split(':');
+        const serverPort = addressSplit.pop() as string;
+        this.serverAddress = { address: addressSplit.join(':'), port: +serverPort.replace(/\/.*/, ''), family: 'IPv4' };
+      } else {
+        this.serverAddress = address;
+      }
+    });
+  }
+
   private debugLog(...args: unknown[]) {
     if (this.debug) {
-      console.log('💻', ...args);
+      console.log('[Queuify]:', ...args);
+    }
+  }
+
+  private debugError(...args: unknown[]) {
+    if (this.debug) {
+      console.error('[Queuify]:', ...args);
     }
   }
 
@@ -191,24 +242,26 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       this.emit(`${queueName}:${QUEUE_EVENTS.JOB_COMPLETE}`, jobId);
     };
 
-    const onUpdate = async (job: tJob, newData: unknown) => {
+    const onUpdate = async (job: tJob, newData: unknown, argQueue?: tQueueMapValue) => {
+      const jobId = job.id;
+      const queueRef = argQueue || queue;
       const existingData = job.data;
       if (typeof newData === 'object' && existingData && typeof existingData === 'object') {
-        const mergedData = { ...existingData, ...newData };
-        newData = mergedData;
+        newData = { ...existingData, ...newData };
       }
+      this.debugLog(`Updating job ${jobId} with new data`, JSON.stringify(newData));
       job.data = newData;
       const preparedData = withErrors(
         job.data,
-        queue.shouldCompressData ? compressData : JSON.stringify,
+        queueRef.shouldCompressData ? compressData : JSON.stringify,
         INVALID_JOB_DATA,
       );
-      const jobId = job.id;
-      await queue.dbActions.updateJob(
+      await queueRef.dbActions.updateJob(
         queueName,
         job.id,
-        queue.shouldCompressData ? PREFIXES.LZ_CACHED + preparedData : preparedData,
+        queueRef.shouldCompressData ? PREFIXES.LZ_CACHED + preparedData : preparedData,
       );
+      this.debugLog(`Updated job ${jobId} with new data`, JSON.stringify(newData));
       this.emit(`${queueName}:${QUEUE_EVENTS.JOB_UPDATE}`, jobId);
     };
 
@@ -217,7 +270,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       this.emit(`${queueName}:${QUEUE_EVENTS.JOB_FAIL}`, jobId);
     };
 
-    const onFinish = (process?: ChildProcess) => {
+    const onFinish = (jobId: string, process?: ChildProcess) => {
       remainingJobs--;
 
       if (!remainingJobs) {
@@ -227,6 +280,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       }
 
       if (process) process.kill();
+      this.jobUpdaters.delete(jobId);
     };
 
     while (workerData.jobs.length) {
@@ -246,10 +300,16 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       };
 
       if (isSandbox) {
-        console.log('Spawning new sandbox');
+        this.debugLog(`Spawning new sandbox to process job ${job.id}`);
+
+        // Set updaters in class to avail update method for sandboxed processes
+        const updaterWithJobContext = (job: tJob, queue: tQueueMapValue) => (newData: tUnknownObject | string) =>
+          onUpdate(job, newData, queue);
+        this.jobUpdaters.set(job.id, updaterWithJobContext(job, queue));
+
         const cpPath = pathJoin(process.cwd(), './lib/helpers/child_process.js');
         // TODO: We are using ts-node just in case worker files are typescript ones!
-        const sandboxedProcess = spawn( 'ts-node', [cpPath], {stdio: ['inherit', 'inherit', 'inherit', 'ipc']});
+        const sandboxedProcess = spawn('ts-node', [cpPath], { stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
 
         sandboxedProcess.on(
           MISC.MESSAGE,
@@ -260,24 +320,8 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
             error?: Error;
           }) => {
             try {
-              console.log('😊 -> QueuifyEngine -> onJobsProcess -> response.action:', response.action, JSON.stringify(response));
+              this.debugLog(`Received message from sandbox for job "${job.id}"`, JSON.stringify(response));
               switch (response.action) {
-                case QUEUE_EVENTS.JOB_UPDATE: {
-                  const eventId = response.eventId;
-                  if (!eventId) return;
-                  await onUpdate(job, response.data);
-                  console.log('Sending to sandbox', eventId);
-                  console.log('😊 -> QueuifyEngine -> onJobsProcess -> sandboxedProcess.send:', sandboxedProcess.send);
-                  sandboxedProcess.send(
-                    {
-                      eventId,
-                      data: job.data,
-                    },
-                    console.error,
-                  );
-                  console.log('Sent to sandbox', eventId);
-                  break;
-                }
                 case QUEUE_EVENTS.JOB_COMPLETE: {
                   await onComplete(job.id);
                   break;
@@ -290,7 +334,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
             } catch (error) {
               this.debugLog(`An error while processing sandbox message for job "${job.id}"!`, error);
             } finally {
-              onFinish(sandboxedProcess);
+              onFinish(job.id, sandboxedProcess);
             }
           },
         );
@@ -301,23 +345,26 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
           } catch (error) {
             this.debugLog(`An error while spawning sandbox for job "${job.id}"!`, error);
           } finally {
-            onFinish(sandboxedProcess);
+            onFinish(job.id, sandboxedProcess);
           }
         });
 
         sandboxedProcess.send({
           job,
+          serverAddress: this.serverAddress,
           workerSource: workerData.worker,
           sharedData: workerData.config.sharedData,
         });
         continue;
       }
 
+      this.debugLog(`Processing job ${job.id} via embedded worker`);
       const workerFunction = promisifyFunction(workerData.worker as (...args: unknown[]) => unknown);
+      const onFinishWithJobIdContext = (jobId: string) => () => onFinish(jobId);
       workerFunction(job)
         .then(async () => await onComplete(job.id))
         .catch(async (error) => await onFailed(job.id, error?.message))
-        .finally(onFinish);
+        .finally(onFinishWithJobIdContext(job.id));
     }
   }
 
@@ -333,7 +380,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
   }
 
   private async startWorkerPool(queue: tQueueMapValue) {
-    // Move running jobs to stalled list
+    // Move running jobs to a stalled list
     const stalledJobs = await queue.dbActions.moveJobsBetweenLists(
       queue.queue.name,
       QUEUIFY_JOB_STATUS.RUNNING,

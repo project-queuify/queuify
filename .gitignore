@@ -119,4 +119,5 @@ dist
 .pnp.*
 
 .idea/
+.vscode/
 *.rdb

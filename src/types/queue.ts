@@ -31,15 +31,19 @@ export type tQueueConfig = tCommonQueueConfig & {
   name: string; // Name of the queue
 };
 
+// noinspection Annotator
 export declare class tQueue {
   constructor(config: tQueueConfig, ...dbOpts: tDbConnectOptions);
   constructor(name: string, ...dbOpts: tDbConnectOptions);
   constructor(name: string);
   constructor();
+
   public db: Redis;
   public name: string;
+
   public schedule(jobId: string, data: unknown): Promise<unknown>;
   public schedule(data: unknown): Promise<unknown>;
+
   public process(name: string, workerFile: tWorkerSandboxSource, workerConfig: tWorkerConfig): Promise<unknown>;
   public process(
     name: string,
@@ -50,8 +54,10 @@ export declare class tQueue {
   public process(workerFile: tWorkerSandboxSource): Promise<unknown>;
   public process(workerFunction: (...args: unknown[]) => unknown, workerConfig: tWorkerConfig): Promise<unknown>;
   public process(workerFunction: (...args: unknown[]) => unknown): Promise<unknown>;
+
   public batch: (job: unknown) => void;
 }
+
 export declare class tQueueEngine extends EventEmitter {
   status: ENGINE_STATUS;
   globalDb: Redis | null; // Global redis connection which is used by all queues if they don't have their own connection
@@ -67,6 +73,7 @@ export type tJob = {
 
 export type tWorkerFunction = (job: tJob) => Promise<unknown> | unknown;
 export type tWorkerSandboxSource = {
+  maxTimeToWaitForServer?: number;
   workerFilePath: string;
   workerFuncName: string;
 };

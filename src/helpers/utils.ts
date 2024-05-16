@@ -1,11 +1,13 @@
 /* eslint-disable @typescript-eslint/ban-types */
 import { compress, decompress } from 'lz-string';
 import crypto from 'node:crypto';
-import { EventEmitter } from 'node:events';
 import uniqid from 'uniqid';
 import { PREFIXES, QUEUIFY_KEY_TYPES, QUEUIFY_JOB_STATUS, MISC } from './constants';
 import { EVENT_TIMED_OUT } from './messages';
+import { Socket } from 'node:net';
+import { tUnknownObject } from '../types';
 
+// noinspection JSValidateJSDoc
 /**
  * Generates a random UUID.
  *
@@ -27,6 +29,7 @@ export const getQueuifyKey = (
   status?: QUEUIFY_JOB_STATUS,
 ): string => `queuify:${name}${type ? `:${type}` : ''}${status ? `:${status}` : ''}`;
 
+// noinspection JSValidateJSDoc
 /**
  * Executes a processor function with the given data, handling any errors that occur.
  *
@@ -45,6 +48,7 @@ export const withErrors = <T, R>(data: T, processor: (data: T) => R, onError: st
   return undefined as R;
 };
 
+// noinspection JSValidateJSDoc
 /**
  * Checks if a value is defined and throws an error if it is not.
  *
@@ -99,13 +103,11 @@ export const compressData = (data: unknown): string => compress(JSON.stringify(d
  * @return {unknown} The decompressed data.
  */
 export const decompressData = (data: string): unknown => {
-  console.log('😊 -> decompressData -> data:', data);
-  console.log('😊 -> decompressData -> PREFIXES.LZ_CACHED:', PREFIXES.LZ_CACHED);
   return JSON.parse(data.startsWith(PREFIXES.LZ_CACHED) ? decompress(data.slice(PREFIXES.LZ_CACHED.length)) : data);
 };
 
 /**
- * Converts a string to title case.
+ * Converts a string to a title case.
  *
  * @param {string} str - The string to convert.
  * @return {string} The converted string in title case.
@@ -115,10 +117,15 @@ export const toTitleCase = (str: string): string =>
     return txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase();
   });
 
-export const promisifyFunction =
-  (fn: Function) =>
-  (...args: unknown[]): Promise<unknown> =>
-    new Promise((resolve, reject) => {
+/**
+ * Promisifies a function by wrapping it in a Promise.
+ *
+ * @param {Function} fn - The function to be promisified.
+ * @return {(...args: unknown[]) => Promise<unknown>} A Promise that resolves with the result of the function.
+ */
+export const promisifyFunction = (fn: Function): ((...args: unknown[]) => Promise<unknown>) => {
+  return (...args: unknown[]): Promise<unknown> => {
+    return new Promise((resolve, reject) => {
       try {
         const result = fn(...args);
         if (result instanceof Promise) {
@@ -130,9 +137,17 @@ export const promisifyFunction =
         reject(error);
       }
     });
+  };
+};
 
 // Forked from the CallSites module!
-export function callSites() {
+// noinspection JSValidateJSDoc
+/**
+ * Retrieves the call sites from the Error stack trace.
+ *
+ * @return {NodeJS.CallSite[]} An array of call sites excluding the current call.
+ */
+export function callSites(): NodeJS.CallSite[] {
   const _prepareStackTrace = Error.prepareStackTrace;
   try {
     let result: NodeJS.CallSite[] = [];
@@ -149,32 +164,37 @@ export function callSites() {
   }
 }
 
-export const waitForProcessResponse = async (
-  process: NodeJS.Process,
-  processData: Record<string, unknown>,
-  maxWait = 1000,
-) => {
-  console.log('😊 -> maxWait:', maxWait);
-  const eventName = processData?.eventId as string;
-  console.log('😊 -> eventName:', eventName);
-  if (!eventName) return;
-  const promise =  new Promise((resolve, reject) => {
+/**
+ * Asynchronously waits for a server response within a specified time frame.
+ *
+ * @param {Socket} server - The server socket to communicate with.
+ * @param {tUnknownObject} serverData - The data to send to the server.
+ * @param {number} maxWait - The maximum time to wait for a response in milliseconds.
+ * @return {Promise<tUnknownObject | string>} A promise that resolves with the server response or rejects with an error.
+ */
+export const waitForServerResponse = async (
+  server: Socket,
+  serverData: tUnknownObject,
+  maxWait: number,
+): Promise<tUnknownObject | string> => {
+  const eventName = serverData?.eventId as string;
+  if (!eventName) throw new Error(`Event ID not provided`);
+  const promise: Promise<tUnknownObject | string> = new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      console.log('timeout triggered', eventName);
       reject(new Error(EVENT_TIMED_OUT(eventName)));
     }, maxWait);
-    console.log('Triggering timeout after', maxWait)
-    process.on(MISC.MESSAGE, (data: { eventId: string }) => {
-      console.log('😊 -> process.on -> data inside:', data.eventId, eventName);
-      if (data.eventId !== eventName) return;
-      console.log('Clearing timeout');
+    server.once(MISC.DATA, (data) => {
+      const parsedData = JSON.parse(data.toString());
+      if (parsedData.eventId !== eventName) return;
       clearTimeout(timeout);
-      console.log('Resolving', data);
-      resolve(data);
+      resolve(parsedData);
     });
-    console.log('😊 -> returnnewPromise -> process.send:', process.send, processData);
-    process.send?.(processData);
+    server.write(JSON.stringify(serverData), (err) => {
+      if (err) {
+        reject(err);
+      }
+    });
   });
 
-  return await promise
+  return await promise;
 };

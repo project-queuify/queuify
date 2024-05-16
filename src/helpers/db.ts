@@ -4,21 +4,22 @@ import Redis from 'ioredis';
 import { tDbConnectOptions } from '../types';
 import { decompressData, getQueuifyKey } from './utils';
 import { JOB_ALREADY_EXISTS } from './messages';
-import { QUEUIFY_KEY_TYPES, QUEUIFY_JOB_STATUS, QUEUIFY_JOB_FIELDS, DB_FIELDS } from './constants';
+import { DB_FIELDS, QUEUIFY_JOB_FIELDS, QUEUIFY_JOB_STATUS, QUEUIFY_KEY_TYPES } from './constants';
 
+// noinspection Annotator
 export const connectToDb = (...args: tDbConnectOptions): Redis => {
-  const redis = !args.length
+  return !args.length
     ? new Redis()
     : args.length === 1
     ? new Redis(args[0] as any)
     : args.length === 2
     ? new Redis(args[0] as any, args[1] as any)
     : new Redis(args[0], args[1], args[2]);
-  return redis;
 };
 
 export class DBActions {
   public db;
+
   constructor(db: Redis) {
     this.db = db;
   }
