@@ -11,10 +11,12 @@ import queuifyEngine, { shouldCompressData } from './engine';
 export default class Queue implements tQueue {
   public db;
   public name;
+  public config;
   private shouldCompressData = shouldCompressData;
 
   constructor(config: tQueueConfig, ...dbOpts: tDbConnectOptions);
   constructor(name: string, ...dbOpts: tDbConnectOptions);
+  constructor(config: tQueueConfig);
   constructor(name: string);
   constructor(...args: unknown[]) {
     if (queuifyEngine.status !== ENGINE_STATUS.RUNNING) {
@@ -29,6 +31,8 @@ export default class Queue implements tQueue {
     if (!this.name) {
       throw new Error('Queue name is required');
     }
+
+    this.config = queueConfig || { name: this.name };
 
     const dbOptions = args.slice(1) as tDbConnectOptions;
     this.db = dbOptions.length
@@ -46,6 +50,10 @@ export default class Queue implements tQueue {
 
   public on(eventName: string, listener: (...args: unknown[]) => unknown): unknown {
     return queuifyEngine.on(`${this.name}:${eventName}`, listener);
+  }
+
+  public off(eventName: string, listener: (...args: unknown[]) => unknown): unknown {
+    return queuifyEngine.off(`${this.name}:${eventName}`, listener);
   }
 
   async schedule(jobId: string, data: unknown): Promise<unknown>;

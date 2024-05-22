@@ -40,6 +40,7 @@ export declare class tQueue {
 
   public db: Redis;
   public name: string;
+  public config: tQueueConfig;
 
   public schedule(jobId: string, data: unknown): Promise<unknown>;
   public schedule(data: unknown): Promise<unknown>;
@@ -97,7 +98,7 @@ export type tQueueMapValue = {
       config: tWorkerConfig;
     }
   >;
-  idleWorkerId: string;
+  idleWorkers: Set<string>;
   isStalledJobsProcessingComplete: boolean;
   shouldCompressData: boolean;
 };

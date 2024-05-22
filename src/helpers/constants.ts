@@ -44,6 +44,7 @@ export enum QUEUE_EVENTS {
   JOB_COMPLETE = 'job:complete',
   JOB_UPDATE = 'job:update',
   JOB_FAIL = 'job:fail',
+  JOB_PROCESS = 'job:process',
 }
 
 export enum QUEUIFY_KEY_TYPES {
@@ -79,3 +80,5 @@ export const MISC = {
   MESSAGE: 'message',
   CONNECTION: 'connection',
 };
+
+export const DEFAULT_MAX_CONCURRENCY = 100;

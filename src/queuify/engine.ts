@@ -24,6 +24,7 @@ import {
   tWorkerSandboxSource,
 } from '../types';
 import {
+  DEFAULT_MAX_CONCURRENCY,
   ENGINE_STATUS,
   ENTITIES,
   MISC,
@@ -133,7 +134,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       queue,
       dbActions: new DBActions(queue.db),
       workers: new Map(),
-      idleWorkerId: '',
+      idleWorkers: new Set(),
       isStalledJobsProcessingComplete: false,
       shouldCompressData,
     });
@@ -146,8 +147,15 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     await queue.dbActions.addJob(queueName, jobId, data);
     this.emit(`${queueName}:${QUEUE_EVENTS.JOB_ADD}`, queueName);
 
-    if (queue.idleWorkerId) {
-      this.emit(`${queueName}:${QUEUE_EVENTS.JOB_POOL_REQUEST}`, { queueName, workerId: queue.idleWorkerId });
+    if (queue.idleWorkers.size) {
+      const workerIds = [...queue.idleWorkers];
+      const idleWorkerId = workerIds.shift();
+      if (!idleWorkerId) return;
+      this.debugLog(
+        `Removing worker ${idleWorkerId} from idle worker pool of queue ${queueName} because it will now request for jobs!`,
+      );
+      queue.idleWorkers.delete(idleWorkerId);
+      this.emit(`${queueName}:${QUEUE_EVENTS.JOB_POOL_REQUEST}`, { queueName, workerId: idleWorkerId });
     }
   }
 
@@ -167,6 +175,9 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       status: WORKER_STATUS.IDLE,
       config: workerConfig,
     });
+    this.debugLog(
+      `Added new worker ${workerId} to queue ${queueName}! If you don't see a notification of worker being added to worker pool, Kindly make sure that you are awaiting for .process method of the queue!`,
+    );
 
     if (!hasWorkers) await this.startWorkers(queueName);
 
@@ -174,13 +185,13 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
   }
 
   private async onWorkerAdd({ queueName, workerId }: { queueName: string; workerId: string }) {
+    this.debugLog(`Added new worker ${workerId} of queue ${queueName} to worker pool!`);
     const queue = this.queues.get(queueName);
     if (!queue) return;
     const workerData = queue.workers.get(workerId);
     if (!workerData) return;
 
     // TODO: Add worker configuration based job pooling
-
     this.emit(`${queueName}:${QUEUE_EVENTS.JOB_POOL_REQUEST}`, { queueName, workerId });
   }
 
@@ -190,10 +201,16 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     const workerData = queue.workers.get(workerId);
     if (!workerData) return;
 
+    // TODO: This concurrency is only used to fetch jobs,
+    //  In ideal world we want to make sure that this concurrency control how many jobs are running in parallel
+    //  For example, If we have a concurrency of 1 with 3 worker, the real concurrency is 3 instead of one.
+    //  To be worked on after community response!
+    const concurrency = queue.queue.config.maxConcurrency || DEFAULT_MAX_CONCURRENCY;
+
     // First prioritize stalled jobs
     let jobs: tPlainJob[] = [];
     if (!queue.isStalledJobsProcessingComplete) {
-      jobs = await queue.dbActions.getJobs(queueName, QUEUIFY_JOB_STATUS.STALLED);
+      jobs = await queue.dbActions.getJobs(queueName, QUEUIFY_JOB_STATUS.STALLED, concurrency);
       if (!jobs.length) {
         queue.isStalledJobsProcessingComplete = true;
       }
@@ -201,12 +218,27 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
 
     if (!jobs.length) {
       // Then get pending jobs
-      jobs = await queue.dbActions.getJobs(queueName, QUEUIFY_JOB_STATUS.PENDING);
+      jobs = await queue.dbActions.getJobs(queueName, QUEUIFY_JOB_STATUS.PENDING, concurrency);
     }
 
-    if (!jobs.length) return;
+    if (!jobs.length) {
+      // If there are no jobs, Mark it's status as idle, so it can pick other jobs immediately
+      const workerData = queue.workers.get(workerId);
+      if (workerData) workerData.status = WORKER_STATUS.IDLE;
+      this.debugLog(
+        `Adding worker ${workerId} of queue ${queueName} to idle pool because there are no pending jobs to process!`,
+      );
+      queue.idleWorkers.add(workerId);
+      return;
+    }
 
     workerData.jobs.push(...jobs);
+    if (queue.idleWorkers.has(workerId)) {
+      this.debugLog(
+        `Removing worker ${workerId} of queue ${queueName} from idle pool as it got pending jobs to process!`,
+      );
+      queue.idleWorkers.delete(workerId);
+    }
 
     this.emit(`${queueName}:${QUEUE_EVENTS.JOB_POOL_PROCESS}`, { queueName, workerId });
   }
@@ -217,31 +249,29 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     const workerData = queue.workers.get(workerId);
     if (!workerData) return;
 
+    // If a worker doesn't have any jobs, Mark it's status as idle, so it can pick other jobs immediately
     if (!workerData.jobs.length) {
       workerData.status = WORKER_STATUS.IDLE;
-      queue.idleWorkerId = workerId;
+      this.debugLog(
+        `Adding worker ${workerId} of queue ${queueName} to idle pool because worker got no jobs at time of processing!`,
+      );
+      queue.idleWorkers.add(workerId);
       return;
     }
-    workerData.status = WORKER_STATUS.BUSY;
-    let idleWorkerId = '';
-    for (const [workerId, worker] of queue.workers) {
-      if (worker.status !== WORKER_STATUS.IDLE) continue;
 
-      idleWorkerId = workerId;
-      break;
-    }
-    queue.idleWorkerId = idleWorkerId;
+    // Set worker as busy so that it doesn't get picked up by queue
+    workerData.status = WORKER_STATUS.BUSY;
 
     if (!workerData.worker) return;
 
     let remainingJobs = workerData.jobs.length;
     const isSandbox = workerData.config.type === WORKER_TYPES.SANDBOX;
 
+    // Job handlers
     const onComplete = async (jobId: string) => {
       await queue.dbActions.completeJob(queueName, jobId);
       this.emit(`${queueName}:${QUEUE_EVENTS.JOB_COMPLETE}`, jobId);
     };
-
     const onUpdate = async (job: tJob, newData: unknown, argQueue?: tQueueMapValue) => {
       const jobId = job.id;
       const queueRef = argQueue || queue;
@@ -264,18 +294,19 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       this.debugLog(`Updated job ${jobId} with new data`, JSON.stringify(newData));
       this.emit(`${queueName}:${QUEUE_EVENTS.JOB_UPDATE}`, jobId);
     };
-
     const onFailed = async (jobId: string, errorMessage: string) => {
       await queue.dbActions.failJob(queueName, jobId, errorMessage);
       this.emit(`${queueName}:${QUEUE_EVENTS.JOB_FAIL}`, jobId);
     };
-
     const onFinish = (jobId: string, process?: ChildProcess) => {
       remainingJobs--;
 
       if (!remainingJobs) {
+        this.debugLog(
+          `Adding worker ${workerId} of queue ${queueName} to idle pool because it finished all assigned jobs!`,
+        );
         workerData.status = WORKER_STATUS.IDLE;
-        queue.idleWorkerId = workerId;
+        queue.idleWorkers.add(workerId);
         this.emit(`${queueName}:${QUEUE_EVENTS.JOB_POOL_REQUEST}`, { queueName, workerId });
       }
 
@@ -286,6 +317,9 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     while (workerData.jobs.length) {
       const job = workerData.jobs.pop() as tJob;
       if (!job) break;
+
+      this.debugLog(`Processing job ${job.id} of queue ${queueName} from worker ${workerId}`);
+      this.emit(`${queueName}:${QUEUE_EVENTS.JOB_PROCESS}`, job.id);
 
       job.complete = async () => {
         await onComplete(job.id);

@@ -19,6 +19,7 @@ Queuify is building!
 - Options (For each queue)
    1. [**Worker Type**] _Sandbox / Embedded / Hybrid_ (takes priority over above concurrency)
    2. [**Max concurrency**] _default 0_ (takes priority over above concurrency)
+        1. Beware that max concurrency is effective on worker level as of now. That means if we have it set at 2, but we have three workers; The final concurrency for that queue would be 6!
    3. [**Batch concurrency**] (takes priority over above concurrency)
    4. [**Run Batch in parallel**] (takes priority over above)
    5. [**Max execution time**] (takes priority over above)
@@ -50,3 +51,27 @@ Queuify is building!
    2. Can provide a unique id or it’ll return a new generated id
    3. Option to delay the execution to wait for more items, so it can be added later on
    4. Once all item added or batch is set to start immediately, Start batch in
+
+## Notes
+- There can be few limitations due to the nature of Queuify design, Below are few examples for the same.
+    - Queueify is promise-based, Meaning it expects some async tasks to be waited to work perfectly!
+    - When adding workers to Queue via `queue.process`, One must await for the response, Queuify Engine starts worker pool when it receives first worker for the given queue, During that time if other workers gets added, There's a high chance that the rest workers will never be used for the processing due to those not being added to worker pool!
+        - For example, Use solution 2 instead of solution 1.
+          ```javascript
+          const queue = new Queue('test-queue');
+          const workerFunc = (job) => console.log(job.id)  
+          const workerFunc2 = (job) => console.log(job.id)  
+          redisQueue.process(workerFunc)
+          // This will cause problem because the above `.process` is not finished yet,
+          // And it's likely that workerpool is not started so it's most likely that second worker won't get any jobs!
+          redisQueue.process(workerFunc2)
+            ```
+          Instead of above, Do following!
+          ```javascript
+          const queue = new Queue('test-queue');
+          const workerFunc = (job) => console.log(job.id)  
+          const workerFunc2 = (job) => console.log(job.id)  
+          // Await will make sure that second worker only gets added after worker pool is set up!
+          await redisQueue.process(workerFunc)
+          await redisQueue.process(workerFunc2)
+            ```
