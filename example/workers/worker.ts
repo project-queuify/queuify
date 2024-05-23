@@ -10,5 +10,13 @@ export const worker = async (job: tJob) => {
   //   return;
   // }
   await job.update({ test: 'data', port: global?.redis?.options?.port });
-  await sleep(5000);
+  const random = Math.random();
+
+  if (random > 0.5) {
+    console.log(`worker -> ${job.id} will fail due to max time limit being reached`);
+  }
+
+  await sleep(random > 0.5 ? 7000 : 3000);
+
+  console.log(`This got print because of no process killing ${job.id}`);
 };

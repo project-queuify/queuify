@@ -2,7 +2,7 @@ import { Redis } from 'ioredis';
 import Queue from '../../../lib';
 import { QUEUE_EVENTS, WORKER_TYPES } from '../../../lib/helpers/constants';
 
-const redisQueue = new Queue({ name: 'first-queue', maxConcurrency: 1 });
+const redisQueue = new Queue({ name: 'first-queue', maxConcurrency: 1, maxExecutionTime: 5 });
 // const dfQueue = new Queue({ name: 'first-queue-df', maxConcurrency: 3 }, 'redis://127.0.0.1:6380', {
 //   connectTimeout: 5000,
 // });
@@ -19,7 +19,8 @@ const inlineProcessor = async (job: any) => {
   //   return;
   // }
   await job.update({ test: 'data' });
-  await sleep(5000);
+  await sleep(7000);
+  console.log(`This will always print because of no process killing ${job.id}`);
 };
 
 const main = async () => {
@@ -52,17 +53,17 @@ const main = async () => {
     // dfQueue.schedule(data).catch(console.error);
   }
 
-  setTimeout(() => {
-    for (let index = 0; index < 5; index++) {
-      const random = Math.random();
-      let str = 'Hello World timeout! queue rd' + index;
-      let data = random > 0.5 ? str : { str };
-      redisQueue.schedule(data).catch(console.error);
-      str = 'Hello World timeout! queue df' + index;
-      data = random > 0.5 ? str : { str };
-      // dfQueue.schedule(data).catch(console.error);
-    }
-  }, 10000);
+  // setTimeout(() => {
+  //   for (let index = 0; index < 5; index++) {
+  //     const random = Math.random();
+  //     let str = 'Hello World timeout! queue rd' + index;
+  //     let data = random > 0.5 ? str : { str };
+  //     redisQueue.schedule(data).catch(console.error);
+  //     str = 'Hello World timeout! queue df' + index;
+  //     data = random > 0.5 ? str : { str };
+  //     // dfQueue.schedule(data).catch(console.error);
+  //   }
+  // }, 10000);
 
   redisQueue.on(QUEUE_EVENTS.JOB_COMPLETE, (data) => {
     return console.log('Job is completed', data);

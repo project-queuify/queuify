@@ -1,6 +1,6 @@
 import { Redis } from 'ioredis';
 import { EventEmitter } from 'node:events';
-import { AddressInfo, createServer, Server } from 'node:net';
+import { AddressInfo, createServer, Server, Socket } from 'node:net';
 import { ChildProcess, spawn } from 'child_process';
 import { join as pathJoin } from 'path';
 
@@ -11,6 +11,7 @@ import {
   DBActions,
   generateId,
   promisifyFunction,
+  toMillis,
   withErrors,
 } from '../helpers';
 import {
@@ -35,6 +36,7 @@ import {
   WORKER_TYPES,
 } from '../helpers/constants';
 import { ALREADY_EXISTS, INVALID_JOB_DATA } from '../helpers/messages';
+import killProcessTree from '../helpers/tree-kill';
 
 export const shouldCompressData = !!globalThis.queuifyConfig?.compressData;
 
@@ -68,7 +70,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
   private initializeCommunicationServer() {
     this.server = createServer();
 
-    this.server.on(MISC.CONNECTION, (socket) => {
+    this.server.on(MISC.CONNECTION, (socket: Socket) => {
       this.debugLog('Child process connected via socket');
       socket.on(MISC.DATA, (stream: Buffer) => {
         const payload = JSON.parse(stream.toString());
@@ -225,10 +227,12 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       // If there are no jobs, Mark it's status as idle, so it can pick other jobs immediately
       const workerData = queue.workers.get(workerId);
       if (workerData) workerData.status = WORKER_STATUS.IDLE;
-      this.debugLog(
-        `Adding worker ${workerId} of queue ${queueName} to idle pool because there are no pending jobs to process!`,
-      );
-      queue.idleWorkers.add(workerId);
+      if (!queue.idleWorkers.has(workerId)) {
+        this.debugLog(
+          `Adding worker ${workerId} of queue ${queueName} to idle pool because there are no pending jobs to process!`,
+        );
+        queue.idleWorkers.add(workerId);
+      }
       return;
     }
 
@@ -252,10 +256,12 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
     // If a worker doesn't have any jobs, Mark it's status as idle, so it can pick other jobs immediately
     if (!workerData.jobs.length) {
       workerData.status = WORKER_STATUS.IDLE;
-      this.debugLog(
-        `Adding worker ${workerId} of queue ${queueName} to idle pool because worker got no jobs at time of processing!`,
-      );
-      queue.idleWorkers.add(workerId);
+      if (!queue.idleWorkers.has(workerId)) {
+        this.debugLog(
+          `Adding worker ${workerId} of queue ${queueName} to idle pool because worker got no jobs at time of processing!`,
+        );
+        queue.idleWorkers.add(workerId);
+      }
       return;
     }
 
@@ -302,15 +308,27 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
       remainingJobs--;
 
       if (!remainingJobs) {
-        this.debugLog(
-          `Adding worker ${workerId} of queue ${queueName} to idle pool because it finished all assigned jobs!`,
-        );
         workerData.status = WORKER_STATUS.IDLE;
-        queue.idleWorkers.add(workerId);
+        if (!queue.idleWorkers.has(workerId)) {
+          this.debugLog(
+            `Adding worker ${workerId} of queue ${queueName} to idle pool because it finished all assigned jobs!`,
+          );
+          queue.idleWorkers.add(workerId);
+        }
         this.emit(`${queueName}:${QUEUE_EVENTS.JOB_POOL_REQUEST}`, { queueName, workerId });
       }
 
-      if (process) process.kill();
+      if (process?.pid) {
+        killProcessTree(process.pid, 'SIGKILL', (error) => {
+          if (error) {
+            return console.error(
+              `Error while killing sandboxed process for job "${jobId}" for queue "${queueName}" in worker "${workerId}"! Kindly report this to us!`,
+              error,
+            );
+          }
+          this.debugLog(`Killed process ${process.pid} created by sandbox of job ${jobId}`);
+        });
+      }
       this.jobUpdaters.delete(jobId);
     };
 
@@ -343,8 +361,38 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
 
         const cpPath = pathJoin(process.cwd(), './lib/helpers/child_process.js');
         // TODO: We are using ts-node just in case worker files are typescript ones!
-        const sandboxedProcess = spawn('ts-node', [cpPath], { stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
+        const sandboxedProcess = spawn('ts-node', [cpPath], {
+          detached: true,
+          stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+        });
 
+        const maxExecutionTime = queue.queue.config.maxExecutionTime;
+        let timeout: NodeJS.Timeout;
+
+        if (maxExecutionTime) {
+          timeout = setTimeout(() => {
+            // Kill sandboxed process along with all child processes, once max execution time is reached
+            this.debugLog(
+              `Killing sandboxed process for job "${job.id}" for queue "${queueName}" in worker "${workerId}" as max execution time (${maxExecutionTime}s) is reached!`,
+            );
+            if (sandboxedProcess.pid)
+              killProcessTree(sandboxedProcess.pid, 'SIGKILL', (error) => {
+                if (error) {
+                  return console.error(
+                    `Error while killing maximum awaited sandboxed process for job "${job.id}" for queue "${queueName}" in worker "${workerId}"! Kindly report this to us!`,
+                    error,
+                  );
+                }
+
+                const errorMessage = `Job failed due to max execution time (${maxExecutionTime}s) reached!`;
+                onFailed(job.id, errorMessage).finally(() => onFinish(job.id));
+
+                this.debugLog(
+                  `Killed sandboxed process for job "${job.id}" for queue "${queueName}" in worker "${workerId}"!`,
+                );
+              });
+          }, toMillis(maxExecutionTime));
+        }
         sandboxedProcess.on(
           MISC.MESSAGE,
           async (response: {
@@ -368,6 +416,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
             } catch (error) {
               this.debugLog(`An error while processing sandbox message for job "${job.id}"!`, error);
             } finally {
+              clearTimeout(timeout);
               onFinish(job.id, sandboxedProcess);
             }
           },
@@ -379,6 +428,7 @@ class QueuifyEngine extends EventEmitter implements tQueueEngine {
           } catch (error) {
             this.debugLog(`An error while spawning sandbox for job "${job.id}"!`, error);
           } finally {
+            clearTimeout(timeout);
             onFinish(job.id, sandboxedProcess);
           }
         });

@@ -198,3 +198,19 @@ export const waitForServerResponse = async (
 
   return await promise;
 };
+
+/**
+ * Converts a number of seconds to milliseconds.
+ *
+ * @param {number} seconds - The number of seconds to convert.
+ * @return {number} The equivalent value in milliseconds.
+ */
+export const toMillis = (seconds: number): number => seconds * 1000;
+
+/**
+ * Converts a given number of milliseconds to seconds.
+ *
+ * @param {number} millis - The number of milliseconds to convert.
+ * @return {number} The equivalent value in seconds.
+ */
+export const toSeconds = (millis: number): number => millis / 1000;
