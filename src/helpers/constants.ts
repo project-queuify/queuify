@@ -34,6 +34,7 @@ export enum WORKER_STATUS {
   IDLE,
   BUSY,
 }
+
 export enum QUEUE_EVENTS {
   QUEUE_ADD = 'queue:add',
   WORKER_ADD = 'worker:add',
@@ -41,7 +42,9 @@ export enum QUEUE_EVENTS {
   JOB_POOL_REQUEST = 'job-pool:request',
   JOB_POOL_PROCESS = 'job-pool:process',
   JOB_COMPLETE = 'job:complete',
+  JOB_UPDATE = 'job:update',
   JOB_FAIL = 'job:fail',
+  JOB_PROCESS = 'job:process',
 }
 
 export enum QUEUIFY_KEY_TYPES {
@@ -70,3 +73,12 @@ export enum DB_FIELDS {
   LEFT = 'LEFT',
   RIGHT = 'RIGHT',
 }
+
+export const MISC = {
+  DATA: 'data',
+  ERROR: 'error',
+  MESSAGE: 'message',
+  CONNECTION: 'connection',
+};
+
+export const DEFAULT_MAX_CONCURRENCY = 100;

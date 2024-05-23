@@ -1,18 +1,17 @@
 {
-  "cSpell.words": [
+  "words": [
     "hexists",
     "hget",
+    "hmget",
     "hset",
     "lmove",
     "lpush",
     "lrange",
     "lrem",
-    "Mr0nline",
+    "nqry",
     "postversion",
     "preversion",
     "queuify",
-    "uniqid",
-    "xadd",
-    "xrange"
+    "uniqid"
   ]
 }

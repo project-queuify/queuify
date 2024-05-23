@@ -3,29 +3,23 @@ import Redis from 'ioredis';
 
 import { tDbConnectOptions } from '../types';
 import { decompressData, getQueuifyKey } from './utils';
-import { JOB_ALREADY_EXISTS, OPERATION_FAILED } from './messages';
-import {
-  ENTITIES,
-  OPERATIONS,
-  QUEUIFY_KEY_TYPES,
-  QUEUIFY_JOB_STATUS,
-  QUEUIFY_JOB_FIELDS,
-  DB_FIELDS,
-} from './constants';
+import { JOB_ALREADY_EXISTS } from './messages';
+import { DB_FIELDS, QUEUIFY_JOB_FIELDS, QUEUIFY_JOB_STATUS, QUEUIFY_KEY_TYPES } from './constants';
 
+// noinspection Annotator
 export const connectToDb = (...args: tDbConnectOptions): Redis => {
-  const redis = !args.length
+  return !args.length
     ? new Redis()
     : args.length === 1
     ? new Redis(args[0] as any)
     : args.length === 2
     ? new Redis(args[0] as any, args[1] as any)
     : new Redis(args[0], args[1], args[2]);
-  return redis;
 };
 
 export class DBActions {
   public db;
+
   constructor(db: Redis) {
     this.db = db;
   }
@@ -48,21 +42,11 @@ export class DBActions {
 
     if (!jobIds.length) return [];
 
-    const idsPipeline = this.db.multi();
-    for (const jobId of jobIds) {
-      idsPipeline.hget(`${queuifyRunsKey}:${jobId}`, QUEUIFY_JOB_FIELDS.JOB_ID);
-    }
-    const streamIds = ((await idsPipeline.exec())?.map((item) => item[1]) || []) as string[];
     const jobsPipeline = this.db.multi();
     const statusPipeline = this.db.multi();
-    const queuifyJobsKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.JOBS);
-    const jobsMap = new Map();
-    for (let i = 0; i < streamIds.length; i++) {
-      const streamId = streamIds[i];
-      const jobId = jobIds[i];
-      if (!streamId) continue;
-      jobsMap.set(streamId, jobId);
-      jobsPipeline.xrange(queuifyJobsKey, streamId, streamId);
+
+    for (const jobId of jobIds) {
+      jobsPipeline.hmget(`${queuifyRunsKey}:${jobId}`, QUEUIFY_JOB_FIELDS.JOB_ID, QUEUIFY_JOB_FIELDS.DATA);
       statusPipeline.hset(`${queuifyRunsKey}:${jobId}`, QUEUIFY_JOB_FIELDS.STATUS, QUEUIFY_JOB_STATUS.RUNNING);
     }
     const results = await Promise.allSettled([jobsPipeline.exec(), statusPipeline.exec()]);
@@ -70,11 +54,10 @@ export class DBActions {
     if (jobsResults.status === 'rejected') throw jobsResults.reason;
     const jobs = [];
     for (const result of jobsResults.value || []) {
-      const data = result[1] as unknown[];
-      const streamData = data[0] as [string, [string, string]];
+      const [jobId, data] = result[1] as string[];
       const job = {
-        id: jobsMap.get(streamData[0]),
-        data: decompressData(streamData[1][1]),
+        id: jobId,
+        data: decompressData(data),
       };
       jobs.push(job);
     }
@@ -91,6 +74,12 @@ export class DBActions {
     await jobPipeline.exec();
   }
 
+  public async updateJob(queueName: string, jobId: string, newData: string) {
+    const queuifyRunsKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.RUNS);
+    const queuifyRunsJobKey = `${queuifyRunsKey}:${jobId}`;
+    await this.db.hset(queuifyRunsJobKey, QUEUIFY_JOB_FIELDS.DATA, newData);
+  }
+
   public async failJob(queueName: string, jobId: string, failedReason: string) {
     const queuifyKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.RUNS);
     const jobPipeline = this.db.multi();
@@ -105,6 +94,7 @@ export class DBActions {
     jobPipeline.lpush(`${queuifyKey}:${QUEUIFY_JOB_STATUS.FAILED}`, jobId);
     await jobPipeline.exec();
   }
+
   public async moveJobsBetweenLists(queueName: string, from: QUEUIFY_JOB_STATUS, to: QUEUIFY_JOB_STATUS) {
     const queuifyKey = getQueuifyKey(queueName, QUEUIFY_KEY_TYPES.RUNS);
     const fromList = `${queuifyKey}:${from}`;
@@ -117,7 +107,7 @@ export class DBActions {
       // L1 = 3,2,1
       // L2 = 6,5,4
       // Moving head to tail makes L2 6,5,4,3,2,1
-      // When Engine will pop from tail, It will process in a order of 3,2,1 which is desired order
+      // When the Engine will pop from tail, It will process in an order of 3,2,1 which is desired order
       jobMovePipeline.lmove(fromList, toList, DB_FIELDS.LEFT, DB_FIELDS.RIGHT);
       jobMovePipeline.hset(`${queuifyKey}:${jobId}`, QUEUIFY_JOB_FIELDS.STATUS, to);
     }
@@ -136,30 +126,23 @@ export class DBActions {
     const script = `
     local queuifyRunsJobKey = KEYS[1]
     local queuifyKey = KEYS[2]
+    local queuifyRunsPendingKey = KEYS[3]
+    local data = ARGV[1]
+    local jobId = ARGV[2]
+
     local exists = redis.call('exists', queuifyRunsJobKey)
     if exists == 1 then
       return redis.error_reply('${JOB_ALREADY_EXISTS(jobId, queueName)}')
     end
     
-    local data = ARGV[1]
-    local streamId = redis.call('xadd', queuifyKey, '*', '${QUEUIFY_JOB_FIELDS.DATA}', data)
-    if not streamId then
-      return redis.error_reply('${OPERATION_FAILED(
-        OPERATIONS.ADD,
-        undefined,
-        ENTITIES.JOB,
-        jobId,
-        ENTITIES.QUEUE,
-        queueName,
-      )}')
-    end
     
     local jobStatusKey = '${QUEUIFY_JOB_FIELDS.STATUS}'
+    local jobDataKey = '${QUEUIFY_JOB_FIELDS.DATA}'
     local jobStatusValue = '${QUEUIFY_JOB_STATUS.PENDING}'
-    redis.call('hset', queuifyRunsJobKey, '${QUEUIFY_JOB_FIELDS.JOB_ID}', streamId, jobStatusKey, jobStatusValue)
+    redis.call('hset', queuifyRunsJobKey, '${
+      QUEUIFY_JOB_FIELDS.JOB_ID
+    }', jobId, jobStatusKey, jobStatusValue, jobDataKey, data)
     
-    local queuifyRunsPendingKey = KEYS[3]
-    local jobId = ARGV[2]
     redis.call('lpush', queuifyRunsPendingKey, jobId)
   `;
 
