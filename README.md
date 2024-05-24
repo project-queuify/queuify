@@ -2,13 +2,15 @@ Queuify is building!
 [![codecov](https://codecov.io/gh/Mr0nline/queuify/graph/badge.svg?token=HTYAPT9VM1)](https://codecov.io/gh/Mr0nline/queuify)
 
 <!-- TOC -->
-  * [Queuify Pattern!](#queuify-pattern)
-  * [Notes](#notes)
-  * [Feature Roadmap](#feature-roadmap)
-    * [Queuify](#queuify)
-    * [For each queue](#for-each-queue)
-    * [Workers](#workers)
-    * [Batching](#batching)
+
+* [Queuify Pattern!](#queuify-pattern)
+* [Notes](#notes)
+* [Feature Roadmap](#feature-roadmap)
+	* [Queuify](#queuify)
+	* [For each queue](#for-each-queue)
+	* [Workers](#workers)
+	* [Batching](#batching)
+
 <!-- TOC -->
 
 ## Queuify Pattern!
@@ -204,4 +206,16 @@ Queuify is building!
 	additional hooks as mentioned above
 - [ ] Can provide a unique id or it’ll return a new generated id
 - [ ] Option to delay the execution to wait for more items, so it can be added later on
-- [ ] Once all item added or batch is set to start immediately, Start batch in 
+- [ ] Once all item added or batch is set to start immediately
+
+## Contributing
+
+The Queuify project welcomes all constructive contributions. Contributions take many forms,
+from code for bug fixes and enhancements, to additions and fixes to documentation, additional
+tests, triaging incoming pull requests and issues, and more!
+
+See the [Contributing Guide](CONTRIBUTING.md) for more technical details on contributing.
+
+### Security Issues
+
+If you discover a security vulnerability in Queuify, please see [Security Policies and Procedures](SECURITY.md).
